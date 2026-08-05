@@ -1,0 +1,9 @@
+@import "tailwindcss";
+@config "../tailwind.config.js";
+
+body {
+  background-color: #F6F8FF;
+  color: #272D2D;
+  font-family: 'Inter', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}

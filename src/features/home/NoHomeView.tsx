@@ -163,12 +163,16 @@ export function NoHomeView({ onHomeCreated }: { onHomeCreated: (id: string) => v
 
     try {
       if (createdBy) {
-        await supabase.from('notifications').insert({
-          user_id: createdBy,
-          title: 'Convite Recusado',
-          message: `Um usuário recusou o convite para a casa ${homeName}.`,
-          read: false
-        }).catch(() => {});
+        try {
+          await supabase.from('notifications').insert({
+            user_id: createdBy,
+            title: 'Convite Recusado',
+            message: `Um usuário recusou o convite para a casa ${homeName}.`,
+            read: false
+          });
+        } catch (err: any) {
+          console.log('Notificação secundária ignorada:', err);
+        }
       }
 
       // Apaga o convite do banco

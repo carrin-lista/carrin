@@ -4,7 +4,7 @@ import { historyService } from '../../services/historyService';
 import { itemService } from '../../services/itemService';
 import { homeService } from '../../services/homeService';
 import { 
-  Calendar, ShoppingBag, FileText, CheckCircle2, 
+  Calendar, ShoppingBag, CheckCircle2, 
   X, Clock, User, TrendingUp, RotateCcw, ChevronRight, AlertCircle, Check, Wallet, Copy
 } from 'lucide-react';
 

@@ -71,14 +71,18 @@ export function InviteView({ inviteId, onAccepted }: InviteViewProps) {
     setProcessing(true);
 
     try {
-      // 1. Tenta avisar o dono da casa via notificação (se falhar, não trava o fluxo)
+      // 1. Tenta avisar o dono da casa via notificação
       if (inviteData.created_by) {
-        await supabase.from('notifications').insert({
-          user_id: inviteData.created_by,
-          title: 'Convite Recusado',
-          message: `Um usuário recusou o convite para a casa ${inviteData.resolvedHomeName}.`,
-          read: false
-        }).catch(err => console.log('Notificação secundária ignorada:', err));
+        try {
+          await supabase.from('notifications').insert({
+            user_id: inviteData.created_by,
+            title: 'Convite Recusado',
+            message: `Um usuário recusou o convite para a casa ${inviteData.resolvedHomeName}.`,
+            read: false
+          });
+        } catch (err: any) {
+          console.log('Notificação secundária ignorada:', err);
+        }
       }
 
       // 2. Apaga o convite do banco para ele sumir definitivamente

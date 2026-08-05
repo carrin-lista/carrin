@@ -514,7 +514,7 @@ export function ShoppingList() {
                           observation={item.observation}
                           isCompleted={item.is_completed}
                           onToggle={() => handleToggle(item)}
-                          onDelete={undefined}
+                          onDelete={() => handleDelete(item.id)}
                           onEdit={() => openEditModal(item)}
                         />
                         {isMarketMode && item.price > 0 && (

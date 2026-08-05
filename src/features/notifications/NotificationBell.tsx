@@ -16,7 +16,7 @@ export function NotificationBell() {
       const { count, error } = await supabase
         .from('notifications')
         .select('*', { count: 'exact', head: true })
-        .eq('user_id', user.id)
+        .eq('user_id', user?.id) // Adicionado ? aqui
         .eq('is_read', false);
 
       if (!error && count && count > 0) {
@@ -30,7 +30,7 @@ export function NotificationBell() {
       .channel('bell-notifications')
       .on(
         'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${user.id}` },
+        { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${user?.id}` }, // Adicionado ? aqui
         () => setHasUnread(true)
       )
       .subscribe();

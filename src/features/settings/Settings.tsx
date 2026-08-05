@@ -133,7 +133,7 @@ export function Settings() {
       const updatedFields = {
         full_name: editFullName.trim(),
         username: formattedUsername,
-        phone: editPhone.trim() || null,
+        phone: editPhone.trim() || undefined, // MUDANÇA AQUI: de null para undefined
       };
 
       await userService.updateProfile(user.id, updatedFields);

@@ -30,7 +30,7 @@ export function NotificationsModal({ isOpen, onClose }: NotificationsModalProps)
         const { data, error } = await supabase
           .from('notifications')
           .select('*')
-          .eq('user_id', user.id)
+          .eq('user_id', user?.id) // Adicionado ? aqui
           .order('created_at', { ascending: false });
 
         if (error) throw error;
@@ -52,7 +52,7 @@ export function NotificationsModal({ isOpen, onClose }: NotificationsModalProps)
           event: 'INSERT',
           schema: 'public',
           table: 'notifications',
-          filter: `user_id=eq.${user.id}`,
+          filter: `user_id=eq.${user?.id}`, // Adicionado ? aqui
         },
         (payload) => {
           const newNotif = payload.new as NotificationItem;

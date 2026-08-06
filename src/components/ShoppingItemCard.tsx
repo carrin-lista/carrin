@@ -1,11 +1,14 @@
 import { useState, useRef } from 'react';
-import { CheckCircle2, Circle, Trash2 } from 'lucide-react';
+import { CheckCircle2, Circle, Trash2, User } from 'lucide-react';
 
 interface ShoppingItemCardProps {
   name: string;
   quantity?: string;
   observation?: string;
   isCompleted: boolean;
+  isMarketMode?: boolean; 
+  creatorAvatar?: string | null;
+  creatorName?: string | null;
   onToggle: () => void;
   onDelete: () => void;
   onEdit: () => void;
@@ -16,6 +19,9 @@ export function ShoppingItemCard({
   quantity, 
   observation, 
   isCompleted, 
+  isMarketMode = false, 
+  creatorAvatar,
+  creatorName,
   onToggle,
   onDelete,
   onEdit
@@ -43,7 +49,6 @@ export function ShoppingItemCard({
     const currentX = e.touches[0].clientX;
     const diff = currentX - touchStartX.current;
 
-    // Permite apenas arrastar para a esquerda (negativo)
     if (diff < 0) {
       if (diff < -90) {
         setOffsetX(-90);
@@ -76,12 +81,15 @@ export function ShoppingItemCard({
       setIsSwiped(false);
       return;
     }
+    
+    // Se não estiver no modo mercado E o item não estiver concluído, bloqueia a marcação
+    if (!isMarketMode && !isCompleted) return;
+    
     onToggle();
   };
 
   return (
     <div className={`relative overflow-hidden mb-3 rounded-card ${!isCompleted && offsetX < 0 ? 'bg-red-500' : 'bg-transparent'}`}>
-      {/* Botão de exclusão revelado ao arrastar (Aparece apenas se NÃO estiver concluído) */}
       {!isCompleted && (
         <div 
           className="absolute right-0 top-0 bottom-0 w-[90px] flex items-center justify-center text-white font-bold cursor-pointer"
@@ -91,7 +99,6 @@ export function ShoppingItemCard({
         </div>
       )}
 
-      {/* Cartão principal */}
       <div 
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
@@ -106,16 +113,22 @@ export function ShoppingItemCard({
         }}
         onClick={handleClick}
         style={{ transform: `translateX(${isCompleted ? 0 : offsetX}px)` }}
-        className={`relative p-4 rounded-card flex items-center justify-between transition-transform duration-200 select-none cursor-pointer ${
+        className={`relative p-4 rounded-card flex items-center justify-between transition-transform duration-200 select-none ${
+          (isMarketMode || isCompleted) ? 'cursor-pointer' : 'cursor-default'
+        } ${
           isCompleted ? 'bg-red-300 text-white opacity-90 shadow-none' : 'bg-white shadow-sm'
         }`}
       >
         <div className="flex items-center flex-grow pr-2">
-          <div className={`mr-3 flex-shrink-0 ${isCompleted ? 'text-white' : 'text-carrin-primary'}`}>
-            {isCompleted ? <CheckCircle2 size={28} /> : <Circle size={28} className="text-gray-300" />}
-          </div>
           
-          <div className="flex flex-col">
+          {/* Exibe o ícone se estiver no Modo Mercado ou se o item já estiver concluído */}
+          {(!isCompleted && !isMarketMode) ? null : (
+            <div className={`mr-3 flex-shrink-0 ${isCompleted ? 'text-white' : 'text-carrin-primary'}`}>
+              {isCompleted ? <CheckCircle2 size={28} /> : <Circle size={28} className="text-gray-300" />}
+            </div>
+          )}
+          
+          <div className="flex flex-col flex-grow pr-2">
             <span className={`font-semibold text-lg ${isCompleted ? 'text-white line-through' : 'text-carrin-dark'}`}>
               {name}
             </span>
@@ -127,6 +140,22 @@ export function ShoppingItemCard({
               </div>
             )}
           </div>
+
+          {/* AVATAR DISCRETO DO CRIADOR DO ITEM */}
+          <div className="flex-shrink-0 ml-2 self-start pt-0.5" title={`Adicionado por ${creatorName || 'Morador'}`}>
+            {creatorAvatar ? (
+              <img 
+                src={creatorAvatar} 
+                alt={creatorName || 'Avatar'} 
+                className={`w-5 h-5 rounded-full object-cover border shadow-sm ${isCompleted ? 'border-white/40' : 'border-gray-200'}`} 
+              />
+            ) : (
+              <div className={`w-5 h-5 rounded-full flex items-center justify-center border text-[9px] font-bold ${isCompleted ? 'bg-white/20 border-white/40 text-white' : 'bg-gray-100 border-gray-200 text-gray-500'}`}>
+                {creatorName ? creatorName.charAt(0).toUpperCase() : <User size={10} />}
+              </div>
+            )}
+          </div>
+
         </div>
       </div>
     </div>

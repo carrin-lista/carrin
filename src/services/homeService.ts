@@ -2,7 +2,6 @@ import { supabase } from './supabase';
 
 export const homeService = {
   async createHome(name: string, userId: string) {
-    // Utiliza a função RPC segura no banco para criar a casa e vincular o owner em transação única
     const { data: homeId, error } = await supabase.rpc('create_home_with_owner', {
       home_name: name.trim(),
       creator_id: userId
@@ -60,7 +59,6 @@ export const homeService = {
     };
   },
 
-  // Busca usuário por username exato
   async findUserByUsername(username: string) {
     const { data, error } = await supabase
       .from('users')
@@ -165,9 +163,6 @@ export const homeService = {
     return true;
   },
 
-  // --- NOVAS FUNÇÕES ADICIONADAS PARA A ETAPA 5 ---
-
-  // Busca todos os convites pendentes e não expirados da casa
   async getPendingInvites(homeId: string) {
     const { data, error } = await supabase
       .from('home_invites')
@@ -180,7 +175,6 @@ export const homeService = {
     return data || [];
   },
 
-  // Cancela/deleta um convite pendente
   async cancelInvite(inviteId: string) {
     const { error } = await supabase
       .from('home_invites')
@@ -190,7 +184,6 @@ export const homeService = {
     if (error) throw error;
   },
 
-  // Remove um morador da casa (exclusivo para o Dono/Admin)
   async removeMember(homeId: string, userId: string) {
     const { error } = await supabase
       .from('home_members')
@@ -199,5 +192,50 @@ export const homeService = {
       .eq('user_id', userId);
 
     if (error) throw error;
+  },
+
+  // --- NOVAS FUNÇÕES PARA A FOTO DA CASA ---
+  async uploadHomePhoto(homeId: string, file: File): Promise<string> {
+    const fileExt = file.name.split('.').pop();
+    const fileName = `${homeId}-${Math.random()}.${fileExt}`;
+    const filePath = `homes/${fileName}`;
+
+    // Trocado de 'avatars' para 'profiles'
+    const { error: uploadError } = await supabase.storage
+      .from('profiles')
+      .upload(filePath, file);
+
+    if (uploadError) throw uploadError;
+
+    // Trocado de 'avatars' para 'profiles'
+    const { data: { publicUrl } } = supabase.storage
+      .from('profiles')
+      .getPublicUrl(filePath);
+
+    await supabase
+      .from('homes')
+      .update({ photo_url: publicUrl })
+      .eq('id', homeId);
+
+    return publicUrl;
+  },
+
+  async deleteHomePhoto(homeId: string, photoUrl: string) {
+    // Trocado de 'avatars' para 'profiles'
+    const filePath = photoUrl.split('/profiles/')[1]; 
+    
+    if (filePath) {
+      const { error: storageError } = await supabase.storage
+        .from('profiles') // Trocado de 'avatars' para 'profiles'
+        .remove([filePath]);
+      if (storageError) throw storageError;
+    }
+
+    const { error: updateError } = await supabase
+      .from('homes')
+      .update({ photo_url: null })
+      .eq('id', homeId);
+
+    if (updateError) throw updateError;
   }
 };

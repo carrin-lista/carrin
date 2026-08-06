@@ -33,9 +33,10 @@ export const itemService = {
   async getItems(homeId: string) {
     const listId = await this.getActiveListId(homeId);
 
+    // ADICIONADO: Faz o join com a tabela de usuários para trazer o avatar e o nome
     const { data, error } = await supabase
       .from('shopping_items')
-      .select('*')
+      .select('*, users:created_by(id, full_name, username, avatar_url)')
       .eq('shopping_list_id', listId)
       .order('created_at', { ascending: false });
 
@@ -46,13 +47,14 @@ export const itemService = {
   async addItem(item: Omit<NewItemDTO, 'shopping_list_id'>) {
     const shoppingListId = await this.getActiveListId(item.home_id);
 
+    // ADICIONADO: Traz o join do usuário também no retorno do item recém-criado
     const { data, error } = await supabase
       .from('shopping_items')
       .insert([{
         ...item,
         shopping_list_id: shoppingListId
       }])
-      .select()
+      .select('*, users:created_by(id, full_name, username, avatar_url)')
       .single();
 
     if (error) throw error;

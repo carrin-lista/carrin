@@ -1,15 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAuthStore } from '../../stores/useAuthStore';
-import { homeService } from '../../services/homeService';
 import { preferenceService, type UserPreferences } from '../../services/preferenceService';
 import { userService } from '../../services/userService';
 import { supabase } from '../../services/supabase';
-import { Users, LogOut, Shield, User, Bell, Edit3, Save, X, Check, AlertCircle, Camera, Trash2 } from 'lucide-react';
-import { pushService } from '../../services/pushService';
+import { LogOut, User, Bell, Edit3, Save, X, Check, AlertCircle, Camera, Trash2 } from 'lucide-react';
+import { notificationService } from '../../services/notificationService';
 
 export function Settings() {
-  const { user, homeId } = useAuthStore();
-  const [members, setMembers] = useState<any[]>([]);
+  const { user } = useAuthStore();
   const [loading, setLoading] = useState(true);
   
   const [userProfile, setUserProfile] = useState<any>(null);
@@ -37,15 +35,13 @@ export function Settings() {
 
   useEffect(() => {
     async function loadData() {
-      if (!homeId || !user) return;
+      if (!user) return;
       try {
-        const [membersData, prefsData, profileData] = await Promise.all([
-          homeService.getHomeMembers(homeId),
+        const [prefsData, profileData] = await Promise.all([
           preferenceService.getPreferences(user.id),
           userService.getProfile(user.id)
         ]);
         
-        setMembers(membersData);
         if (prefsData) setPreferences(prefsData);
         if (profileData) {
           setUserProfile(profileData);
@@ -60,7 +56,7 @@ export function Settings() {
       }
     }
     loadData();
-  }, [homeId, user]);
+  }, [user]);
 
   // Máscara e trava para o formato de telefone brasileiro: (99) 99999-9999
   const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -133,7 +129,7 @@ export function Settings() {
       const updatedFields = {
         full_name: editFullName.trim(),
         username: formattedUsername,
-        phone: editPhone.trim() || undefined, // MUDANÇA AQUI: de null para undefined
+        phone: editPhone.trim() || undefined,
       };
 
       await userService.updateProfile(user.id, updatedFields);
@@ -169,18 +165,18 @@ export function Settings() {
     <div className="min-h-screen bg-carrin-bg p-6 pb-32 max-w-lg mx-auto space-y-6 relative">
       
       {feedback && (
-  <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-3 rounded-card shadow-lg text-xs font-bold flex items-center gap-2 animate-in fade-in slide-in-from-top duration-200 whitespace-nowrap w-max max-w-[95vw] overflow-hidden ${feedback.type === 'success' ? 'bg-emerald-600 text-white' : 'bg-red-600 text-white'}`}>
-    {feedback.type === 'success' ? <Check size={16} className="shrink-0" /> : <AlertCircle size={16} className="shrink-0" />}
-    <span className="truncate">{feedback.text}</span>
-    <button onClick={() => setFeedback(null)} className="ml-2 opacity-75 hover:opacity-100 shrink-0">
-      <X size={14} />
-    </button>
-  </div>
-)}
+        <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-3 rounded-card shadow-lg text-xs font-bold flex items-center gap-2 animate-in fade-in slide-in-from-top duration-200 whitespace-nowrap w-max max-w-[95vw] overflow-hidden ${feedback.type === 'success' ? 'bg-emerald-600 text-white' : 'bg-red-600 text-white'}`}>
+          {feedback.type === 'success' ? <Check size={16} className="shrink-0" /> : <AlertCircle size={16} className="shrink-0" />}
+          <span className="truncate">{feedback.text}</span>
+          <button onClick={() => setFeedback(null)} className="ml-2 opacity-75 hover:opacity-100 shrink-0">
+            <X size={14} />
+          </button>
+        </div>
+      )}
 
       <div>
-        <h1 className="text-2xl font-bold text-carrin-dark mb-1">Ajustes da Casa</h1>
-        <p className="text-gray-500 text-sm">Gerencie o seu ambiente, notificações e quem tem acesso.</p>
+        <h1 className="text-2xl font-bold text-carrin-dark mb-1">Ajustes</h1>
+        <p className="text-gray-500 text-sm">Gerencie o seu perfil e preferências de notificação.</p>
       </div>
 
       <div className="bg-white rounded-card p-5 shadow-sm space-y-4 border border-gray-100">
@@ -204,7 +200,6 @@ export function Settings() {
         ) : isEditingProfile ? (
           <form onSubmit={handleSaveProfile} className="space-y-4 pt-1">
             
-            {/* Bloco de Avatar Interativo na Edição */}
             <div className="flex items-center gap-4">
               <div 
                 onClick={() => setShowAvatarMenu(!showAvatarMenu)}
@@ -238,7 +233,6 @@ export function Settings() {
               />
             </div>
 
-            {/* Menu flutuante de Opções de Foto */}
             {showAvatarMenu && (
               <div className="bg-gray-50 border border-gray-200 rounded-small p-2 flex gap-2 animate-in fade-in duration-150">
                 <button
@@ -373,43 +367,6 @@ export function Settings() {
         )}
       </div>
 
-      <div className="bg-white rounded-card p-5 shadow-sm border border-gray-100">
-        <div className="flex items-center gap-2 mb-4 text-carrin-dark font-semibold">
-          <Users size={20} className="text-carrin-primary" />
-          <span>Moradores da Casa</span>
-        </div>
-
-        {loading ? (
-          <p className="text-sm text-gray-400">Carregando membros...</p>
-        ) : (
-          <div className="flex flex-col gap-3">
-            {members.map((member, index) => (
-              <div key={index} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-none">
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center text-gray-400 overflow-hidden shrink-0">
-                    {member.users?.avatar_url ? (
-                      <img src={member.users.avatar_url} alt="Avatar" className="w-full h-full object-cover" />
-                    ) : (
-                      <User size={18} />
-                    )}
-                  </div>
-                  <div>
-                    <p className="text-sm font-bold text-carrin-dark">
-                      {member.users?.username || 'Sem username'}
-                      {member.users?.id === user?.id && ' (Você)'}
-                    </p>
-                    <p className="text-xs text-gray-400">{member.users?.email}</p>
-                  </div>
-                </div>
-                <span className="text-xs px-2.5 py-1 rounded-full bg-gray-100 font-medium text-gray-600 uppercase flex items-center gap-1 shrink-0">
-                  <Shield size={12} /> {member.role}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
       <div className="bg-white rounded-card p-5 shadow-sm space-y-4 border border-gray-100">
         <div className="flex items-center gap-2 text-carrin-dark font-semibold pb-2 border-b border-gray-50">
           <Bell size={20} className="text-carrin-primary" />
@@ -459,18 +416,16 @@ export function Settings() {
 
         <div className="mt-6 pt-4 border-t border-gray-100">
           <button
-            onClick={async () => {
-              if (!user) return;
-              const success = await pushService.requestPermissionAndSubscribe(user.id);
-              if (success) {
-                showFeedback('success', 'Aparelho conectado! Você receberá alertas.');
-              }
-            }}
-            className="w-full bg-gray-50 border border-gray-200 text-carrin-dark py-3 rounded-small font-semibold text-sm hover:bg-gray-100 transition-colors flex justify-center items-center gap-2"
-          >
-            <Bell size={16} className="text-emerald-600" />
-            Ativar Alertas Neste Aparelho
-          </button>
+  onClick={async () => {
+    if (!user) return;
+    await notificationService.subscribeToPushNotifications(user.id);
+    showFeedback('success', 'Aparelho conectado! Você receberá alertas.');
+  }}
+  className="w-full bg-gray-50 border border-gray-200 text-carrin-dark py-3 rounded-small font-semibold text-sm hover:bg-gray-100 transition-colors flex justify-center items-center gap-2"
+>
+  <Bell size={16} className="text-emerald-600" />
+  Ativar Alertas Neste Aparelho
+</button>
           <p className="text-center text-[10px] text-gray-400 mt-2">
             Você precisa ativar isso em cada celular que quiser receber avisos.
           </p>

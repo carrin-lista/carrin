@@ -5,7 +5,7 @@ import { itemService } from '../../services/itemService';
 import { homeService } from '../../services/homeService';
 import { 
   Calendar, ShoppingBag, CheckCircle2, 
-  X, Clock, User, TrendingUp, RotateCcw, ChevronRight, AlertCircle, Check, Wallet, Copy
+  X, Clock, User, TrendingUp, RotateCcw, ChevronRight, AlertCircle, Check, Wallet, Copy, Share2
 } from 'lucide-react';
 
 export function History() {
@@ -22,6 +22,20 @@ export function History() {
   // Estados do Módulo Pix
   const [showPixModal, setShowPixModal] = useState(false);
   const [splitMembers, setSplitMembers] = useState<string[]>([]);
+
+  // Trava o scroll do fundo se QUALQUER modal do histórico estiver aberto
+  const isAnyModalOpen = !!(selectedReceipt || showPixModal || expandedImage);
+
+  useEffect(() => {
+    if (isAnyModalOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = 'unset';
+    }
+    return () => {
+      document.body.style.overflow = 'unset';
+    };
+  }, [isAnyModalOpen]);
 
   useEffect(() => {
     async function loadData() {
@@ -80,22 +94,42 @@ export function History() {
     );
   };
 
-  const copyPixMessage = (total: number, perPerson: number) => {
+  const handleSharePixMessage = async (total: number, perPerson: number) => {
     const text = `🛒 *Compras no Carrin*\nTotal da compra: R$ ${total.toFixed(2)}\nDividido para ${splitMembers.length}: *R$ ${perPerson.toFixed(2)}* pra cada.\n\nJá podem mandar o Pix! 💸`;
     
-    if (navigator?.clipboard?.writeText) {
-      navigator.clipboard.writeText(text);
+    const fallbackCopy = () => {
+      if (navigator?.clipboard?.writeText) {
+        navigator.clipboard.writeText(text);
+      } else {
+        const textArea = document.createElement("textarea");
+        textArea.value = text;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        textArea.remove();
+      }
+      setShowPixModal(false);
+      showFeedback('success', 'Texto copiado! (Compartilhamento exige HTTPS)');
+    };
+
+    if (navigator.share && window.isSecureContext) {
+      try {
+        await navigator.share({
+          title: 'Resumo da Compra - Carrin',
+          text: text,
+        });
+        setShowPixModal(false);
+        showFeedback('success', 'Resumo compartilhado com sucesso!');
+      } catch (error: any) {
+        if (error.name !== 'AbortError') {
+          console.error("Erro no Share API:", error);
+          fallbackCopy();
+        }
+      }
     } else {
-      const textArea = document.createElement("textarea");
-      textArea.value = text;
-      document.body.appendChild(textArea);
-      textArea.select();
-      document.execCommand('copy');
-      textArea.remove();
+      console.warn("Web Share API não disponível no modo local (HTTP). Copiando texto.");
+      fallbackCopy();
     }
-    
-    setShowPixModal(false);
-    showFeedback('success', 'Mensagem de cobrança copiada!');
   };
 
   if (loading) {
@@ -116,11 +150,11 @@ export function History() {
     <div className="p-6 pb-24 max-w-lg mx-auto relative">
       
       {feedback && (
-        <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-3 rounded-card shadow-lg text-xs font-bold flex items-center gap-2 animate-in fade-in slide-in-from-top duration-200 whitespace-nowrap w-max max-w-[95vw] overflow-hidden ${feedback.type === 'success' ? 'bg-emerald-600 text-white' : 'bg-red-600 text-white'}`}>
-          {feedback.type === 'success' ? <Check size={16} className="shrink-0" /> : <AlertCircle size={16} className="shrink-0" />}
+        <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-[9999] px-5 py-3 rounded-full shadow-2xl text-xs font-bold flex items-center gap-2 animate-in fade-in slide-in-from-top-4 duration-300 whitespace-nowrap w-max max-w-[95vw] overflow-hidden ${feedback.type === 'success' ? 'bg-carrin-primary text-white' : 'bg-red-600 text-white'}`}>
+          {feedback.type === 'success' ? <Check size={18} className="shrink-0 text-white" /> : <AlertCircle size={18} className="shrink-0" />}
           <span className="truncate">{feedback.text}</span>
-          <button onClick={() => setFeedback(null)} className="ml-2 opacity-75 hover:opacity-100 shrink-0">
-            <X size={14} />
+          <button onClick={() => setFeedback(null)} className="ml-2 opacity-80 hover:opacity-100 shrink-0 flex items-center">
+            <X size={16} />
           </button>
         </div>
       )}
@@ -288,7 +322,6 @@ export function History() {
                 {total > 0 && homeMembers.length > 1 && (
                   <button
                     onClick={() => {
-                      // Por padrão, seleciona todos os moradores da casa
                       setSplitMembers(homeMembers.map(m => m.users?.id).filter(Boolean));
                       setShowPixModal(true);
                     }}
@@ -456,12 +489,12 @@ export function History() {
               </div>
 
               <button 
-                onClick={() => copyPixMessage(total, perPerson)}
+                onClick={() => handleSharePixMessage(total, perPerson)}
                 disabled={count === 0}
                 className="w-full bg-emerald-600 text-white py-3 rounded-small text-sm font-bold flex items-center justify-center gap-2 hover:bg-emerald-700 transition-all disabled:opacity-50 shadow-sm"
               >
-                <Copy size={16} />
-                <span>Copiar Resumo de Cobrança</span>
+                <Share2 size={16} />
+                <span>Compartilhar Resumo</span>
               </button>
             </div>
           </div>

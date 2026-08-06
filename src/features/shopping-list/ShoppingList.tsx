@@ -12,6 +12,8 @@ import { itemService } from '../../services/itemService';
 import { historyService } from '../../services/historyService';
 import { CheckCheck, ShoppingCart, X, AlertCircle, Play, Search, ListFilter, Plus } from 'lucide-react';
 import { NotificationBell } from '../notifications/NotificationBell';
+import { PushPermissionModal } from './PushPermissionModal'; 
+import { notificationService } from '../../services/notificationService';
 
 const EMPTY_MESSAGES = [
   "Quando algo acabar em casa, coloque aqui.",
@@ -48,6 +50,7 @@ export function ShoppingList() {
   const [priceModalItem, setPriceModalItem] = useState<any | null>(null);
   const [priceInput, setPriceInput] = useState('');
 
+  const [showPushPrompt, setShowPushPrompt] = useState(false);
   const [itemToUncheck, setItemToUncheck] = useState<any | null>(null);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -55,6 +58,20 @@ export function ShoppingList() {
   const [editingItem, setEditingItem] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   const [finishing, setFinishing] = useState(false);
+
+  // Trava o scroll do fundo se QUALQUER modal da lista estiver aberto
+  const isAnyModalOpen = !!(priceModalItem || itemToUncheck || showTutorial || isFinishModalOpen || isModalOpen || showPushPrompt);
+
+  useEffect(() => {
+    if (isAnyModalOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = 'unset';
+    }
+    return () => {
+      document.body.style.overflow = 'unset';
+    };
+  }, [isAnyModalOpen]);
 
   const fetchItems = async () => {
     if (!homeId) return;
@@ -135,6 +152,35 @@ export function ShoppingList() {
     }
   }, [items.length, loading]);
 
+  useEffect(() => {
+    if ('Notification' in window) {
+      const permission = Notification.permission;
+      const hasSeenPrompt = localStorage.getItem('carrin_push_prompt_seen');
+      
+      // Só mostra se o usuário ainda não decidiu E se não mostramos o nosso modal antes
+      if (permission === 'default' && !hasSeenPrompt) {
+        const timer = setTimeout(() => setShowPushPrompt(true), 3000);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, []);
+
+  // --- FUNÇÕES DE CONTROLE DO MODAL DE PUSH (ETAPA D) ---
+  const handleEnablePush = async () => {
+    localStorage.setItem('carrin_push_prompt_seen', 'true');
+    setShowPushPrompt(false);
+    
+    if (user) {
+      await notificationService.subscribeToPushNotifications(user.id);
+    }
+  };
+
+  const handleDeclinePush = () => {
+    localStorage.setItem('carrin_push_prompt_seen', 'true');
+    setShowPushPrompt(false);
+  };
+  // -----------------------------------------------------
+
   const handleToggleMarketMode = () => {
     if (!isMarketMode) {
       const seenTutorial = localStorage.getItem('carrin_market_tutorial_seen');
@@ -166,7 +212,12 @@ export function ShoppingList() {
 
     if (isMarketMode && nextStatus) {
       setPriceModalItem(item);
-      setPriceInput(item.price ? item.price.toString() : '');
+      // Se o item já tiver preço salvo, trazemos formatado para o teclado
+      if (item.price) {
+        setPriceInput(Number(item.price).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+      } else {
+        setPriceInput('');
+      }
       return;
     }
 
@@ -196,11 +247,33 @@ export function ShoppingList() {
     }
   };
 
+  // NOVA FUNÇÃO: Máscara automática de dinheiro (R$)
+  const handlePriceChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value.replace(/\D/g, ''); // Pega só os números
+    
+    if (value === '') {
+      setPriceInput('');
+      return;
+    }
+
+    const numberValue = parseInt(value, 10) / 100;
+    
+    setPriceInput(
+      numberValue.toLocaleString('pt-BR', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      })
+    );
+  };
+
+  // ATUALIZADO: Salva convertendo a máscara "1.500,00" para número real
   const handleSavePriceModal = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!priceModalItem) return;
 
-    const parsedPrice = priceInput.trim() !== '' ? parseFloat(priceInput.replace(',', '.')) : 0;
+    const parsedPrice = priceInput.trim() !== '' 
+      ? parseFloat(priceInput.replace(/\./g, '').replace(',', '.')) 
+      : 0;
     
     await executeToggle(priceModalItem.id, true, !isNaN(parsedPrice) ? parsedPrice : 0);
     setPriceModalItem(null);
@@ -247,6 +320,7 @@ export function ShoppingList() {
     }
     
     setEditingItem(null);
+    setSearchQuery('');
   };
 
   const handleOpenFinishModal = () => {
@@ -321,6 +395,9 @@ export function ShoppingList() {
                       quantity={item.quantity}
                       observation={item.observation}
                       isCompleted={item.is_completed}
+                      isMarketMode={isMarketMode}
+                      creatorAvatar={item.users?.avatar_url}
+                      creatorName={item.users?.full_name || item.users?.username}
                       onToggle={() => handleToggle(item)}
                       onDelete={() => handleDelete(item.id)}
                       onEdit={() => openEditModal(item)}
@@ -352,6 +429,9 @@ export function ShoppingList() {
               quantity={item.quantity}
               observation={item.observation}
               isCompleted={item.is_completed}
+              isMarketMode={isMarketMode}
+              creatorAvatar={item.users?.avatar_url}
+              creatorName={item.users?.full_name || item.users?.username}
               onToggle={() => handleToggle(item)}
               onDelete={() => handleDelete(item.id)}
               onEdit={() => openEditModal(item)}
@@ -365,7 +445,7 @@ export function ShoppingList() {
   return (
     <div className="w-full min-h-screen bg-carrin-bg relative">
       
-      {/* ABA 1: LISTA (Fica oculta se currentTab !== 'list') */}
+      {/* ABA 1: LISTA */}
       <div className={`w-full min-h-screen bg-carrin-bg ${isMarketMode ? 'pb-24' : 'pb-32'} ${currentTab === 'list' ? 'block' : 'hidden'}`}>
         
         {!isMarketMode && hasActiveMarketSession && (
@@ -513,6 +593,9 @@ export function ShoppingList() {
                           quantity={item.quantity}
                           observation={item.observation}
                           isCompleted={item.is_completed}
+                          isMarketMode={isMarketMode}
+                          creatorAvatar={item.users?.avatar_url}
+                          creatorName={item.users?.full_name || item.users?.username}
                           onToggle={() => handleToggle(item)}
                           onDelete={() => handleDelete(item.id)}
                           onEdit={() => openEditModal(item)}
@@ -635,12 +718,16 @@ export function ShoppingList() {
         </div>
       )}
 
+      {/* MODAL DE PREÇO ATUALIZADO */}
       {priceModalItem && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white w-full max-w-sm rounded-card p-6 shadow-xl animate-in fade-in duration-200">
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-lg font-bold text-carrin-dark">Preço do Item</h3>
-              <button onClick={() => setPriceModalItem(null)} className="text-gray-400 hover:text-carrin-dark">
+              <button onClick={() => {
+                setPriceModalItem(null);
+                setPriceInput('');
+              }} className="text-gray-400 hover:text-carrin-dark">
                 <X size={20} />
               </button>
             </div>
@@ -653,11 +740,11 @@ export function ShoppingList() {
               <div className="relative">
                 <span className="absolute left-3 top-3.5 text-gray-400 font-bold">R$</span>
                 <input
-                  type="text"
-                  inputMode="decimal"
+                  type="tel"
+                  inputMode="numeric"
                   placeholder="0,00"
                   value={priceInput}
-                  onChange={(e) => setPriceInput(e.target.value)}
+                  onChange={handlePriceChange}
                   autoFocus
                   className="w-full pl-10 pr-3 py-3.5 bg-gray-50 border border-gray-200 rounded-small text-xl font-extrabold text-carrin-dark focus:outline-none focus:border-emerald-600"
                 />
@@ -669,6 +756,7 @@ export function ShoppingList() {
                   onClick={() => {
                     executeToggle(priceModalItem.id, true, 0);
                     setPriceModalItem(null);
+                    setPriceInput('');
                   }}
                   className="w-1/2 bg-gray-100 text-gray-600 py-3 rounded-small font-semibold text-sm hover:bg-gray-200"
                 >
@@ -691,6 +779,12 @@ export function ShoppingList() {
         onClose={() => { setIsModalOpen(false); setEditingItem(null); }} 
         onSave={handleSaveItem}
         initialData={editingItem}
+        existingItems={items}
+        onGoToExisting={(item) => {
+          setIsModalOpen(false);
+          setEditingItem(null);
+          setSearchQuery(item.name);
+        }}
       />
 
       <FinishShoppingModal
@@ -700,6 +794,13 @@ export function ShoppingList() {
         totalAmount={totalEstimated}
         totalItems={completedItems.length}
         loading={finishing}
+      />
+
+      {/* --- RENDERIZANDO O MODAL (ETAPA E) --- */}
+      <PushPermissionModal 
+        isOpen={showPushPrompt} 
+        onClose={handleDeclinePush} 
+        onConfirm={handleEnablePush} 
       />
 
       {/* Navegação Inferior Fixa */}

@@ -3,11 +3,10 @@ import { useAuthStore } from '../../stores/useAuthStore';
 import { homeService } from '../../services/homeService';
 import { 
   Users, Home as HomeIcon, Shield, UserPlus, Copy, Check, 
-  Clock, Edit2, Save, User, Search, Send, Calendar, Trash2, 
-  Settings, Share2, AlertCircle, X 
+  Clock, Edit3, Save, User, Search, Send, Calendar, Trash2, 
+  Settings, Share2, AlertCircle, X, Camera 
 } from 'lucide-react';
 
-// Componente isolado para o Swipe-to-Delete Universal (Touch + Mouse + Hover)
 function SwipeableInviteItem({ invite, onCancel }: { invite: any, onCancel: () => void }) {
   const [offsetX, setOffsetX] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
@@ -17,7 +16,6 @@ function SwipeableInviteItem({ invite, onCancel }: { invite: any, onCancel: () =
   const targetUser = invite.users;
   const expiresDate = new Date(invite.expires_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
 
-  // Eventos de Touch (Mobile)
   const handleTouchStart = (e: React.TouchEvent) => {
     startXRef.current = e.touches[0].clientX - offsetX;
     setIsDragging(true);
@@ -25,17 +23,16 @@ function SwipeableInviteItem({ invite, onCancel }: { invite: any, onCancel: () =
   const handleTouchMove = (e: React.TouchEvent) => {
     if (!isDragging) return;
     let newX = e.touches[0].clientX - startXRef.current;
-    if (newX > 0) newX = 0; // Impede arrastar para a direita
-    if (newX < -80) newX = -80; // Limite do arraste (largura da lixeira)
+    if (newX > 0) newX = 0;
+    if (newX < -80) newX = -80;
     setOffsetX(newX);
   };
   const handleTouchEnd = () => {
     setIsDragging(false);
-    if (offsetX < -40) setOffsetX(-80); // Abre completamente se passou da metade
-    else setOffsetX(0); // Fecha se não puxou o suficiente
+    if (offsetX < -40) setOffsetX(-80);
+    else setOffsetX(0);
   };
 
-  // Eventos de Mouse (Web - Permite arrastar no computador)
   const handleMouseDown = (e: React.MouseEvent) => {
     startXRef.current = e.clientX - offsetX;
     setIsDragging(true);
@@ -62,7 +59,6 @@ function SwipeableInviteItem({ invite, onCancel }: { invite: any, onCancel: () =
 
   return (
     <div className="relative overflow-hidden rounded-small border border-gray-100 bg-red-500 group select-none">
-      {/* Fundo Vermelho com a Lixeira (Revelado ao arrastar) */}
       <div className="absolute inset-y-0 right-0 w-20 flex items-center justify-center text-white z-0">
         <button
           onClick={(e) => {
@@ -76,7 +72,6 @@ function SwipeableInviteItem({ invite, onCancel }: { invite: any, onCancel: () =
         </button>
       </div>
 
-      {/* Cartão Frontal (O que desliza) */}
       <div
         className={`relative z-10 flex items-center justify-between p-3.5 bg-gray-50 cursor-grab active:cursor-grabbing md:group-hover:-translate-x-20 ${
           isDragging ? 'transition-none' : 'transition-transform duration-300 ease-out'
@@ -117,6 +112,11 @@ export function Home() {
   const [isEditingName, setIsEditingName] = useState(false);
   const [newName, setNewName] = useState('');
   const [savingName, setSavingName] = useState(false);
+
+  // Estados para foto da casa
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [showPhotoMenu, setShowPhotoMenu] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [inviteMethod, setInviteMethod] = useState<'link' | 'username'>('link');
   const [inviteLink, setInviteLink] = useState('');
@@ -197,6 +197,45 @@ export function Home() {
     }
   };
 
+  const handlePhotoUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    try {
+      if (!homeId || !event.target.files || event.target.files.length === 0) return;
+      setUploadingPhoto(true);
+      setShowPhotoMenu(false);
+      const file = event.target.files[0];
+      
+      if (homeData?.photo_url) {
+        await homeService.deleteHomePhoto(homeId, homeData.photo_url);
+      }
+
+      const publicUrl = await homeService.uploadHomePhoto(homeId, file);
+      setHomeData({ ...homeData, photo_url: publicUrl });
+      showFeedback('success', 'Foto da casa atualizada com sucesso!');
+    } catch (error) {
+      console.error(error);
+      showFeedback('error', 'Erro ao atualizar foto. Verifique a conexão.');
+    } finally {
+      setUploadingPhoto(false);
+    }
+  };
+
+  const handleRemovePhoto = async () => {
+    try {
+      if (!homeId || !homeData?.photo_url) return;
+      setUploadingPhoto(true);
+      setShowPhotoMenu(false);
+      
+      await homeService.deleteHomePhoto(homeId, homeData.photo_url);
+      setHomeData({ ...homeData, photo_url: null });
+      showFeedback('success', 'Foto removida com sucesso!');
+    } catch (error) {
+      console.error(error);
+      showFeedback('error', 'Erro ao remover foto.');
+    } finally {
+      setUploadingPhoto(false);
+    }
+  };
+
   const handleGenerateInvite = async () => {
     if (!homeId || generating) return;
     setGenerating(true);
@@ -239,7 +278,6 @@ export function Home() {
     }
   };
 
-  // Máscara para forçar o @ e letras minúsculas na busca
   const handleSearchUsernameChange = (val: string) => {
     let formatted = val.toLowerCase().replace(/[^a-z0-9]/g, '');
     if (formatted.length > 0) {
@@ -351,11 +389,65 @@ export function Home() {
       )}
 
       <div className="bg-white rounded-card p-5 shadow-sm border border-gray-100 space-y-4">
+        
+        {/* Bloco de Interação da Foto embutido no modal original */}
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className="w-14 h-14 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0 shadow-inner">
-              <HomeIcon size={28} />
+          <div className="flex items-center gap-4 relative">
+            
+            <div 
+              onClick={() => {
+                if (canManageHome) setShowPhotoMenu(!showPhotoMenu);
+              }}
+              className={`w-14 h-14 rounded-full flex items-center justify-center shrink-0 shadow-inner relative overflow-hidden group ${
+                canManageHome ? 'cursor-pointer border-2 border-emerald-500' : 'bg-emerald-50 text-emerald-600 border border-emerald-100'
+              } ${homeData?.photo_url ? 'bg-gray-100' : 'bg-emerald-50 text-emerald-600'}`}
+              title={canManageHome ? "Clique para alterar a foto" : "Foto da casa"}
+            >
+              {uploadingPhoto ? (
+                <span className="text-xs font-medium animate-pulse text-emerald-600">...</span>
+              ) : homeData?.photo_url ? (
+                <img src={homeData.photo_url} alt="Casa" className="w-full h-full object-cover group-hover:opacity-75 transition-opacity" />
+              ) : (
+                <HomeIcon size={28} className={canManageHome ? "group-hover:opacity-75 transition-opacity" : ""} />
+              )}
+              
+              {canManageHome && (
+                <div className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity text-white">
+                  <Camera size={18} />
+                </div>
+              )}
             </div>
+
+            {showPhotoMenu && canManageHome && (
+              <div className="absolute top-16 left-0 bg-white border border-gray-200 rounded-small p-2 flex gap-2 animate-in fade-in duration-150 shadow-lg z-10 w-max">
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex-1 bg-white border border-gray-200 py-2 px-3 rounded text-xs font-bold text-carrin-dark hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-200 transition-colors flex items-center justify-center gap-1.5 shadow-sm"
+                >
+                  <Camera size={14} /> Trocar foto
+                </button>
+                {homeData?.photo_url && (
+                  <button
+                    type="button"
+                    onClick={handleRemovePhoto}
+                    className="flex-1 bg-white border border-gray-200 py-2 px-3 rounded text-xs font-bold text-red-500 hover:bg-red-50 hover:border-red-200 transition-colors flex items-center justify-center gap-1.5 shadow-sm"
+                  >
+                    <Trash2 size={14} /> Remover
+                  </button>
+                )}
+              </div>
+            )}
+
+            <input 
+              type="file" 
+              ref={fileInputRef} 
+              accept="image/*" 
+              onChange={handlePhotoUpload} 
+              disabled={uploadingPhoto} 
+              className="hidden" 
+            />
+
             <div>
               {isEditingName ? (
                 <div className="flex items-center gap-2">
@@ -376,15 +468,15 @@ export function Home() {
                   </button>
                 </div>
               ) : (
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-3">
                   <h1 className="text-xl font-extrabold text-carrin-dark">{homeData?.name || 'Minha Casa'}</h1>
                   {canManageHome && (
                     <button 
                       onClick={() => setIsEditingName(true)}
-                      className="text-gray-400 hover:text-emerald-600 transition-colors"
+                      className="text-xs text-emerald-600 font-bold hover:underline flex items-center gap-1"
                       title="Editar nome da casa"
                     >
-                      <Edit2 size={16} />
+                      <Edit3 size={14} /> Editar
                     </button>
                   )}
                 </div>

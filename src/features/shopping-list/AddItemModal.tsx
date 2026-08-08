@@ -2,7 +2,9 @@ import { useState, useEffect } from 'react';
 import { Button } from '../../components/Button';
 import { Input } from '../../components/Input';
 import { X, Tag, Plus, Check, AlertCircle } from 'lucide-react';
-import { predictCategory } from '../../utils/categoryPredictor';
+import { analyzeItemInput } from '../../utils/categoryPredictor';
+import { preferenceService } from '../../services/preferenceService';
+import { useAuthStore } from '../../stores/useAuthStore';
 
 const CATEGORIES = [
   '🛒 Mantimentos',
@@ -11,6 +13,10 @@ const CATEGORIES = [
   '🥛 Laticínios',
   '🧹 Limpeza',
   '🧴 Higiene',
+  '🍺 Bebidas',
+  '🐶 Pet',
+  '👶 Bebê',
+  '🏠 Utilidades',
   '📦 Outros'
 ];
 
@@ -20,13 +26,15 @@ interface ItemModalProps {
   onSave: (name: string, quantity: string, observation: string, category_id: string) => Promise<void>;
   initialData?: { name: string; quantity?: string; observation?: string; category_id?: string } | null;
   existingItems?: any[];
+  homePreferences: Record<string, string>;
   onGoToExisting?: (item: any) => void;
 }
 
-// Normaliza o nome: ignora maiúsculas/minúsculas, espaços extras e múltiplos espaços
 const normalizeName = (str: string) => str.trim().toLowerCase().replace(/\s+/g, ' ');
 
-export function AddItemModal({ isOpen, onClose, onSave, initialData, existingItems = [], onGoToExisting }: ItemModalProps) {
+export function AddItemModal({ isOpen, onClose, onSave, initialData, existingItems = [], homePreferences, onGoToExisting }: ItemModalProps) {
+  const { user, homeId } = useAuthStore();
+  
   const [name, setName] = useState('');
   const [quantity, setQuantity] = useState('');
   const [observation, setObservation] = useState('');
@@ -38,7 +46,6 @@ export function AddItemModal({ isOpen, onClose, onSave, initialData, existingIte
   const [duplicateItem, setDuplicateItem] = useState<any | null>(null);
   const [pendingData, setPendingData] = useState<{ isContinue: boolean } | null>(null);
 
-  // Trava o scroll da página ao fundo quando o modal abre
   useEffect(() => {
     if (isOpen) {
       document.body.style.overflow = 'hidden';
@@ -79,16 +86,39 @@ export function AddItemModal({ isOpen, onClose, onSave, initialData, existingIte
     setName(value);
 
     if (!initialData && value.length > 2) {
-      const predicted = predictCategory(value);
-      setCategory(predicted);
+      const { category: predictedCategory, extractedQuantity, normalizedName } = analyzeItemInput(value);
+      
+      let finalCategory = predictedCategory;
+      if (normalizedName && homePreferences[normalizedName]) {
+        finalCategory = homePreferences[normalizedName];
+      }
+      
+      setCategory(finalCategory);
+      
+      if (extractedQuantity && !quantity) {
+        setQuantity(extractedQuantity);
+      }
     }
   };
 
   const checkForDuplicate = (targetName: string) => {
-    if (initialData) return null; // Não valida duplicidade em modo de edição
+    if (initialData) return null;
     const normalizedTarget = normalizeName(targetName);
     if (!normalizedTarget) return null;
     return existingItems.find(item => normalizeName(item.name) === normalizedTarget);
+  };
+
+  const checkAndLearnCategory = () => {
+    if (!homeId || !user) return;
+    
+    const { category: predictedCategory, normalizedName } = analyzeItemInput(name);
+    if (!normalizedName) return;
+
+    const expectedCategory = homePreferences[normalizedName] || predictedCategory;
+
+    if (category !== expectedCategory) {
+      preferenceService.saveHomeCategoryPreference(homeId, normalizedName, category, user.id).catch(console.error);
+    }
   };
 
   const handleSaveAndClose = async (e: React.FormEvent) => {
@@ -102,6 +132,7 @@ export function AddItemModal({ isOpen, onClose, onSave, initialData, existingIte
       return;
     }
 
+    checkAndLearnCategory();
     await executeSaveAndClose();
   };
 
@@ -130,6 +161,7 @@ export function AddItemModal({ isOpen, onClose, onSave, initialData, existingIte
       return;
     }
 
+    checkAndLearnCategory();
     executeSaveAndContinue();
   };
 
@@ -176,7 +208,6 @@ export function AddItemModal({ isOpen, onClose, onSave, initialData, existingIte
       <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
         <div className="bg-white w-full max-w-md rounded-t-card sm:rounded-card p-6 shadow-lg animate-in fade-in slide-in-from-bottom duration-200 relative overflow-hidden">
           
-          {/* MODAL DE AVISO DE DUPLICIDADE */}
           {duplicateItem && (
             <div className="absolute inset-0 bg-white z-30 flex flex-col justify-center p-6 animate-in fade-in duration-150">
               <div className="flex items-center gap-2 text-amber-600 mb-3">

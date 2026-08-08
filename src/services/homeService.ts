@@ -237,5 +237,14 @@ export const homeService = {
       .eq('id', homeId);
 
     if (updateError) throw updateError;
+  },
+async transferOwnership(homeId: string, newOwnerId: string) {
+    const { error } = await supabase.rpc('transfer_home_ownership', {
+      p_home_id: homeId,
+      p_new_owner_id: newOwnerId
+    });
+
+    if (error) throw error;
   }
 };
+

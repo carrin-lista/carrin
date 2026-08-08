@@ -34,5 +34,43 @@ export const preferenceService = {
       console.error("Erro ao salvar preferências:", error);
       throw error;
     }
+  },
+
+  // --- NOVAS FUNÇÕES PARA O APRENDIZADO DA CASA ---
+  
+  async getHomeCategoryPreferences(homeId: string): Promise<Record<string, string>> {
+    const { data, error } = await supabase
+      .from('home_category_preferences')
+      .select('normalized_name, category_id')
+      .eq('home_id', homeId);
+
+    if (error) {
+      console.error("Erro ao buscar preferências da casa:", error);
+      return {};
+    }
+
+    const prefs: Record<string, string> = {};
+    data?.forEach(row => {
+      prefs[row.normalized_name] = row.category_id;
+    });
+    return prefs;
+  },
+
+  async saveHomeCategoryPreference(homeId: string, normalizedName: string, categoryId: string, userId: string) {
+    const { error } = await supabase
+      .from('home_category_preferences')
+      .upsert({
+        home_id: homeId,
+        normalized_name: normalizedName,
+        category_id: categoryId,
+        updated_by: userId,
+        updated_at: new Date().toISOString()
+      }, { 
+        onConflict: 'home_id, normalized_name'
+      });
+
+    if (error) {
+      console.error("Erro ao salvar preferência da casa:", error);
+    }
   }
 };

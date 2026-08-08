@@ -12,25 +12,36 @@ export function CreateHome({ onHomeCreated }: { onHomeCreated: (id: string) => v
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user) return;
+    
+    // 1. Validação Defensiva Forte: Garante que temos o ID real do usuário
+    if (!user || !user.id) {
+      setErrorMsg("Sua sessão ainda está carregando ou expirou. Tente recarregar a página.");
+      return;
+    }
+
+    // 2. Previne nomes vazios com espaços
+    if (!name.trim()) {
+      setErrorMsg("Por favor, digite um nome para a casa.");
+      return;
+    }
     
     setLoading(true);
     setErrorMsg(null);
     
     try {
-      // 1. Tenta criar a casa e já pega o retorno (novo ID) imediatamente
-      const newHome = await homeService.createHome(name, user.id);
+      const newHome = await homeService.createHome(name.trim(), user.id);
       
-      // 2. Avançamos de tela diretamente usando o ID retornado, 
-      // eliminando a lentidão e o problema de sincronismo do banco!
       if (newHome && newHome.id) {
         onHomeCreated(newHome.id);
       } else {
         throw new Error("Falha de sincronização. A casa não retornou um ID válido.");
       }
     } catch (error: any) {
-      console.error("Erro detectado:", error);
-      setErrorMsg(error.message || "Não foi possível criar a Casa. Tente novamente.");
+      // 3. Log Técnico Silencioso (Para depuração no console)
+      console.error("Erro interno ao criar a casa:", error);
+      
+      // 4. Mensagem Amigável (Oculta o erro real do Supabase/Postgres)
+      setErrorMsg("Não foi possível criar sua Casa no momento. Verifique sua conexão e tente novamente.");
     } finally {
       setLoading(false);
     }

@@ -5,7 +5,7 @@ import { itemService } from '../../services/itemService';
 import { homeService } from '../../services/homeService';
 import { 
   Calendar, ShoppingBag, CheckCircle2, 
-  X, Clock, User, TrendingUp, RotateCcw, ChevronRight, AlertCircle, Check, Wallet, Copy, Share2
+  X, Clock, User, TrendingUp, RotateCcw, ChevronRight, AlertCircle, Check, Wallet, Share2
 } from 'lucide-react';
 
 export function History() {

@@ -130,6 +130,11 @@ export function Home() {
 
   const [memberToRemove, setMemberToRemove] = useState<{ id: string; name: string } | null>(null);
 
+  // NOVOS ESTADOS PARA TRANSFERÊNCIA DE TITULARIDADE
+  const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
+  const [selectedNewOwner, setSelectedNewOwner] = useState<any>(null);
+  const [transferring, setTransferring] = useState(false);
+
   const [activeSubTab, setActiveSubTab] = useState<'overview' | 'invites' | 'settings'>('overview');
 
   const showFeedback = (type: 'success' | 'error', text: string) => {
@@ -354,6 +359,25 @@ export function Home() {
     } catch (error) {
       console.error('Erro ao remover morador:', error);
       showFeedback('error', 'Não foi possível remover o morador.');
+    }
+  };
+
+  const handleTransferOwnership = async () => {
+    if (!homeId || !selectedNewOwner || transferring) return;
+    setTransferring(true);
+    try {
+      await homeService.transferOwnership(homeId, selectedNewOwner.users.id);
+      
+      showFeedback('success', 'Titularidade transferida com sucesso!');
+      setIsTransferModalOpen(false);
+      setSelectedNewOwner(null);
+      
+      loadHomeData(); 
+    } catch (error: any) {
+      console.error('Erro ao transferir titularidade:', error);
+      showFeedback('error', error.message || 'Erro ao transferir titularidade.');
+    } finally {
+      setTransferring(false);
     }
   };
 
@@ -772,14 +796,27 @@ export function Home() {
                 <p className="font-bold text-carrin-dark">
                   {ownerMember?.users?.full_name || 'Não definido'} ({ownerMember?.users?.username || '@dono'})
                 </p>
-                <p className="text-xs text-gray-400">{ownerMember?.users?.email}</p>
+                <p className="text-xs text-gray-400 mb-3">{ownerMember?.users?.email}</p>
+                
+                {currentUserRole === 'owner' && members.length > 1 && (
+                  <button 
+                    onClick={() => setIsTransferModalOpen(true)}
+                    className="w-full bg-white border border-gray-200 text-carrin-dark py-2 rounded text-xs font-bold hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-200 transition-colors"
+                  >
+                    Transferir titularidade
+                  </button>
+                )}
+                {currentUserRole === 'owner' && members.length <= 1 && (
+                  <p className="text-[10px] text-gray-400 italic border-t border-gray-200 pt-2 mt-2">
+                    É necessário possuir outro morador ativo na Casa para transferir a titularidade.
+                  </p>
+                )}
               </div>
             </div>
 
             <div className="space-y-1">
               <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Estrutura de Propriedade</p>
               <div className="bg-gray-50 p-3 rounded-small text-xs text-gray-500 space-y-1">
-                <p>• Transferência de propriedade: <span className="text-gray-400 italic">Preparado para futura implementação</span></p>
                 <p>• Exclusão da residência: <span className="text-gray-400 italic">Protegido por regras de integridade</span></p>
               </div>
             </div>
@@ -813,6 +850,72 @@ export function Home() {
                 Sim, Remover
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE TRANSFERÊNCIA DE TITULARIDADE */}
+      {isTransferModalOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
+          <div className="bg-white w-full max-w-sm rounded-card p-6 shadow-2xl space-y-4 animate-in zoom-in-95 duration-200 max-h-[90vh] flex flex-col">
+            <div className="flex justify-between items-center pb-2 border-b border-gray-100 shrink-0">
+              <h3 className="text-lg font-extrabold text-carrin-dark">Transferir Titularidade</h3>
+              <button onClick={() => { setIsTransferModalOpen(false); setSelectedNewOwner(null); }} className="text-gray-400 hover:text-carrin-dark">
+                <X size={20} />
+              </button>
+            </div>
+            
+            <p className="text-xs text-gray-500 shrink-0">
+              Selecione o morador que será o novo Dono da Casa. Essa ação não pode ser desfeita por você.
+            </p>
+
+            <div className="overflow-y-auto space-y-2 flex-1 min-h-[100px]">
+              {members.filter(m => m.users.id !== user?.id).map((member) => (
+                <div 
+                  key={member.id} 
+                  onClick={() => setSelectedNewOwner(member)}
+                  className={`flex items-center gap-3 p-3 rounded-small border cursor-pointer transition-all ${
+                    selectedNewOwner?.id === member.id 
+                    ? 'border-emerald-500 bg-emerald-50' 
+                    : 'border-gray-100 bg-gray-50 hover:border-emerald-200 hover:bg-white'
+                  }`}
+                >
+                  <div className="w-10 h-10 rounded-full bg-white overflow-hidden shrink-0 flex items-center justify-center border border-gray-200 text-gray-400">
+                    {member.users?.avatar_url ? <img src={member.users.avatar_url} className="w-full h-full object-cover" /> : <User size={20} />}
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-carrin-dark">{member.users?.full_name}</p>
+                    <p className="text-xs font-semibold text-emerald-600">{member.users?.username}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {selectedNewOwner && (
+              <div className="pt-2 shrink-0">
+                <div className="p-3 bg-red-50 border border-red-100 rounded-small mb-4 text-center">
+                  <p className="text-xs font-bold text-red-700">Transferir a Casa para {selectedNewOwner.users.username}?</p>
+                  <p className="text-[10px] text-red-600 mt-1">Após a transferência, você passará a ser um membro comum e perderá os privilégios administrativos.</p>
+                </div>
+                
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setSelectedNewOwner(null)}
+                    disabled={transferring}
+                    className="w-1/2 bg-gray-100 text-gray-600 py-3 rounded-small font-bold text-xs hover:bg-gray-200 transition-colors"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={handleTransferOwnership}
+                    disabled={transferring}
+                    className="w-full bg-carrin-dark text-white py-3 rounded-small font-bold text-xs hover:bg-gray-800 transition-all shadow flex justify-center items-center gap-2"
+                  >
+                    {transferring ? 'Transferindo...' : 'Confirmar'}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

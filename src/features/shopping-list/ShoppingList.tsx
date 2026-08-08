@@ -14,6 +14,7 @@ import { CheckCheck, ShoppingCart, X, AlertCircle, Play, Search, ListFilter, Plu
 import { NotificationBell } from '../notifications/NotificationBell';
 import { PushPermissionModal } from './PushPermissionModal'; 
 import { notificationService } from '../../services/notificationService';
+import { preferenceService } from '../../services/preferenceService';
 
 const EMPTY_MESSAGES = [
   "Quando algo acabar em casa, coloque aqui.",
@@ -58,6 +59,7 @@ export function ShoppingList() {
   const [editingItem, setEditingItem] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   const [finishing, setFinishing] = useState(false);
+  const [homePreferences, setHomePreferences] = useState<Record<string, string>>({});
 
   // Trava o scroll do fundo se QUALQUER modal da lista estiver aberto
   const isAnyModalOpen = !!(priceModalItem || itemToUncheck || showTutorial || isFinishModalOpen || isModalOpen || showPushPrompt);
@@ -94,6 +96,11 @@ export function ShoppingList() {
         const listId = await itemService.getActiveListId(homeId);
         setActiveListId(listId);
         await fetchItems();
+
+        // NOVO: Carrega as preferências da casa
+        const prefs = await preferenceService.getHomeCategoryPreferences(homeId);
+        setHomePreferences(prefs);
+
       } catch (error) {
         console.error("Erro ao carregar dados:", error);
       } finally {
@@ -693,9 +700,20 @@ export function ShoppingList() {
       {showTutorial && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
           <div className="bg-white w-full max-w-md rounded-card p-6 shadow-2xl animate-in zoom-in-95 duration-200">
-            <div className="flex items-center gap-2 text-emerald-600 mb-3">
-              <ShoppingCart size={28} />
-              <h3 className="text-xl font-extrabold text-carrin-dark">Como utilizar o Modo Mercado</h3>
+            
+            {/* NOVO CABEÇALHO COM BOTÃO FECHAR */}
+            <div className="flex justify-between items-center mb-4">
+              <div className="flex items-center gap-2 text-emerald-600">
+                <ShoppingCart size={28} />
+                <h3 className="text-xl font-extrabold text-carrin-dark">Modo Mercado</h3>
+              </div>
+              <button 
+                onClick={() => setShowTutorial(false)} 
+                className="text-gray-400 hover:text-carrin-dark p-1 rounded-full hover:bg-gray-100 transition-colors"
+                title="Fechar tutorial"
+              >
+                <X size={24} />
+              </button>
             </div>
             
             <div className="space-y-3 text-sm text-gray-600 mb-6">
@@ -704,7 +722,7 @@ export function ShoppingList() {
                 <li><strong>Toque rápido:</strong> Os itens ficam maiores e fáceis de marcar com uma mão só enquanto empurra o carrinho.</li>
                 <li><strong>Preços em tempo real:</strong> Ao marcar um item como comprado, digite rapidamente o preço usando o teclado numérico.</li>
                 <li><strong>Total do Carrinho:</strong> Acompanhe o valor acumulado da compra na hora para evitar surpresas no caixa.</li>
-                <li><strong>Sessão inteligente:</strong> Se sair para adicionar um item esquecido, o app avisa que a compra continua ativa e permite retomar com 1 toque.</li>
+                <li><strong>Sessão inteligente:</strong> Você não precisa sair do modo Mercado para adicionar um item esquecido, utilize o botão <strong>+</strong> para adicionar um item rápido.</li>
               </ul>
             </div>
 
@@ -780,6 +798,7 @@ export function ShoppingList() {
         onSave={handleSaveItem}
         initialData={editingItem}
         existingItems={items}
+        homePreferences={homePreferences} /* <-- ADICIONE ESTA LINHA AQUI */
         onGoToExisting={(item) => {
           setIsModalOpen(false);
           setEditingItem(null);

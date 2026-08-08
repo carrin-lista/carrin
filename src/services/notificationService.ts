@@ -65,8 +65,8 @@ export const notificationService = {
       }
 
       // 6. Extrai as chaves criptográficas geradas pelo navegador
-      const p256dh = btoa(String.fromCharCode.apply(null, new Uint8Array(subscription.getKey('p256dh') as ArrayBuffer)));
-      const auth = btoa(String.fromCharCode.apply(null, new Uint8Array(subscription.getKey('auth') as ArrayBuffer)));
+      const p256dh = btoa(String.fromCharCode(...new Uint8Array(subscription.getKey('p256dh') as ArrayBuffer)));
+const auth = btoa(String.fromCharCode(...new Uint8Array(subscription.getKey('auth') as ArrayBuffer)));
 
       // 7. Limpa inscrições antigas com o mesmo endpoint para evitar duplicação e salva a nova
       await supabase.from('push_subscriptions').delete().eq('endpoint', subscription.endpoint);

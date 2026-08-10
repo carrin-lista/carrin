@@ -6,13 +6,17 @@ import { itemService } from '../../services/itemService';
 import { homeService } from '../../services/homeService';
 import { 
   Calendar, ShoppingBag, CheckCircle2, 
-  X, Clock, User, TrendingUp, RotateCcw, ChevronRight, AlertCircle, Check, Wallet, Share2
+  X, Clock, User, TrendingUp, RotateCcw, ChevronRight, AlertCircle, Check, Wallet, Share2, Search, CopyPlus, Store, Edit2, Plus
 } from 'lucide-react';
 import { useTutorialStore } from '../../stores/useTutorialStore';
 
 interface HistoryProps {
   isActive?: boolean;
 }
+
+const normalizeStr = (str: string) => {
+  return str ? str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase() : '';
+};
 
 export function History({ isActive }: HistoryProps) {
   const { user, homeId } = useAuthStore();
@@ -22,15 +26,32 @@ export function History({ isActive }: HistoryProps) {
   const [homeMembers, setHomeMembers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   
+  const [searchQuery, setSearchQuery] = useState('');
+  
   const [expandedImage, setExpandedImage] = useState<string | null>(null);
-  const [selectedReceipt, setSelectedReceipt] = useState<any | null>(null);
+  
+  const [selectedReceiptId, setSelectedReceiptId] = useState<string | null>(null);
+  const [buyAgainReceiptId, setBuyAgainReceiptId] = useState<string | null>(null);
+  
+  const [activeListNames, setActiveListNames] = useState<string[]>([]);
+  
   const [restoring, setRestoring] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   const [showPixModal, setShowPixModal] = useState(false);
   const [splitMembers, setSplitMembers] = useState<string[]>([]);
 
-  const isAnyModalOpen = !!(selectedReceipt || showPixModal || expandedImage);
+  const [buyAgainSelections, setBuyAgainSelections] = useState<Record<string, boolean>>({});
+  const [buyingAgain, setBuyingAgain] = useState(false);
+  const [preparingBuyAgain, setPreparingBuyAgain] = useState(false);
+
+  const [isEditingMarket, setIsEditingMarket] = useState(false);
+  const [editMarketName, setEditMarketName] = useState('');
+
+  const selectedReceipt = historyList.find(r => r.id === selectedReceiptId) || null;
+  const buyAgainReceipt = historyList.find(r => r.id === buyAgainReceiptId) || null;
+
+  const isAnyModalOpen = !!(selectedReceiptId || showPixModal || expandedImage || buyAgainReceiptId);
 
   useEffect(() => {
     if (isAnyModalOpen) {
@@ -60,43 +81,36 @@ export function History({ isActive }: HistoryProps) {
     }
   }, [homeId]);
 
-  // Carregamento inicial (apenas monta os dados)
   useEffect(() => {
     loadData(false);
   }, [loadData]);
 
-  // Atualização baseada no ciclo de vida (aba ativada no próprio aparelho)
   useEffect(() => {
     if (isActive && homeId) {
       loadData(true);
     }
   }, [isActive, homeId, loadData]);
 
-  // Atualização em tempo real (aparelhos de outros membros)
   useEffect(() => {
     if (!homeId) return;
-
     const channel = supabase
       .channel(`history_shopping_lists_${homeId}`)
       .on(
         'postgres_changes',
-        {
-          event: '*', 
-          schema: 'public',
-          table: 'shopping_lists',
-          filter: `home_id=eq.${homeId}`
-        },
-        () => {
-          // Qualquer mudança em shopping_lists da casa força o recarregamento
-          loadData(true);
-        }
+        { event: '*', schema: 'public', table: 'shopping_lists', filter: `home_id=eq.${homeId}` },
+        () => { loadData(true); }
       )
       .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    return () => { supabase.removeChannel(channel); };
   }, [homeId, loadData]);
+
+  useEffect(() => {
+    if (selectedReceiptId && homeId) {
+      itemService.getItems(homeId).then(items => {
+        setActiveListNames(items.map(i => normalizeStr(i.name)));
+      }).catch(console.error);
+    }
+  }, [selectedReceiptId, homeId]);
 
   const showFeedback = (type: 'success' | 'error', text: string) => {
     setFeedback({ type, text });
@@ -105,10 +119,19 @@ export function History({ isActive }: HistoryProps) {
 
   const handleRestoreUnboughtItems = async (unboughtItems: any[]) => {
     if (!homeId || !user || unboughtItems.length === 0) return;
-    
     setRestoring(true);
+    
     try {
-      await Promise.all(unboughtItems.map(item => 
+      const currentActive = await itemService.getItems(homeId);
+      const currentNames = currentActive.map(i => normalizeStr(i.name));
+      const itemsToAdd = unboughtItems.filter(item => !currentNames.includes(normalizeStr(item.name)));
+
+      if (itemsToAdd.length === 0) {
+        showFeedback('success', 'Todos os itens já estão na sua lista atual!');
+        return;
+      }
+
+      await Promise.all(itemsToAdd.map(item => 
         itemService.addItem({
           name: item.name,
           quantity: item.quantity,
@@ -120,8 +143,15 @@ export function History({ isActive }: HistoryProps) {
         } as any)
       ));
       
-      showFeedback('success', `${unboughtItems.length} itens retornaram para a sua lista!`);
-      setSelectedReceipt(null);
+      const alreadyInList = unboughtItems.length - itemsToAdd.length;
+      if (alreadyInList > 0) {
+        showFeedback('success', `${itemsToAdd.length} adicionados. ${alreadyInList} já estavam na lista.`);
+      } else {
+        showFeedback('success', `${itemsToAdd.length} itens retornaram para a sua lista!`);
+      }
+      
+      setActiveListNames([...currentNames, ...itemsToAdd.map(i => normalizeStr(i.name))]);
+      
     } catch (error) {
       console.error("Erro ao restaurar itens:", error);
       showFeedback('error', 'Erro ao reaproveitar os itens.');
@@ -130,15 +160,113 @@ export function History({ isActive }: HistoryProps) {
     }
   };
 
-  const toggleSplitMember = (memberId: string) => {
-    setSplitMembers(prev => 
-      prev.includes(memberId) ? prev.filter(id => id !== memberId) : [...prev, memberId]
-    );
+  const handleOpenBuyAgain = async (receiptId: string) => {
+    setPreparingBuyAgain(true);
+    try {
+      const currentActive = await itemService.getItems(homeId!);
+      const currentNormalizedNames = currentActive.map(i => normalizeStr(i.name));
+      setActiveListNames(currentNormalizedNames);
+      
+      const initialSelections: Record<string, boolean> = {};
+      const targetReceipt = historyList.find(r => r.id === receiptId);
+      const boughtItems = targetReceipt?.shopping_items?.filter((i: any) => i.is_completed) || [];
+      
+      boughtItems.forEach((item: any) => {
+        initialSelections[item.id] = !currentNormalizedNames.includes(normalizeStr(item.name));
+      });
+      
+      setBuyAgainSelections(initialSelections);
+      setBuyAgainReceiptId(receiptId);
+    } catch (error) {
+      console.error(error);
+      showFeedback('error', 'Erro ao preparar itens.');
+    } finally {
+      setPreparingBuyAgain(false);
+    }
+  };
+
+  const handleConfirmBuyAgain = async () => {
+    if (!homeId || !user || !buyAgainReceipt) return;
+    
+    const boughtItems = buyAgainReceipt.shopping_items?.filter((i: any) => i.is_completed) || [];
+    const itemsToAttempt = boughtItems.filter((i: any) => buyAgainSelections[i.id]);
+    if (itemsToAttempt.length === 0) return;
+
+    setBuyingAgain(true);
+    try {
+      const currentActive = await itemService.getItems(homeId);
+      const currentNames = currentActive.map(i => normalizeStr(i.name));
+      const itemsToAdd = itemsToAttempt.filter((item: any) => !currentNames.includes(normalizeStr(item.name)));
+
+      if (itemsToAdd.length === 0) {
+        showFeedback('success', 'Os itens selecionados já estão na sua lista!');
+        setBuyAgainReceiptId(null);
+        return;
+      }
+
+      await Promise.all(itemsToAdd.map((item: any) => 
+        itemService.addItem({
+          name: item.name,
+          quantity: item.quantity,
+          unit: item.unit,
+          observation: item.observation,
+          category_id: item.category_id || '🛒 Mantimentos',
+          home_id: homeId,
+          created_by: user.id
+        } as any)
+      ));
+      
+      const alreadyInList = itemsToAttempt.length - itemsToAdd.length;
+      if (alreadyInList > 0) {
+        showFeedback('success', `${itemsToAdd.length} adicionados. ${alreadyInList} já estavam na lista.`);
+      } else {
+        showFeedback('success', `${itemsToAdd.length} itens adicionados à Lista!`);
+      }
+      
+      setActiveListNames([...currentNames, ...itemsToAdd.map((i: any) => normalizeStr(i.name))]);
+      setBuyAgainReceiptId(null); 
+    } catch (error) {
+      console.error("Erro ao adicionar itens comprados:", error);
+      showFeedback('error', 'Erro ao adicionar os itens.');
+    } finally {
+      setBuyingAgain(false);
+    }
+  };
+
+  const toggleBuyAgainSelection = (itemId: string) => {
+    setBuyAgainSelections(prev => ({ ...prev, [itemId]: !prev[itemId] }));
+  };
+
+  const handleSaveMarketEdit = async () => {
+    if (!selectedReceipt) return;
+    try {
+      const newName = editMarketName.trim() || null;
+      await historyService.updateMarketName(selectedReceipt.id, newName);
+      setIsEditingMarket(false);
+    } catch (err) {
+      console.error(err);
+      showFeedback('error', 'Erro ao atualizar o mercado.');
+    }
+  };
+
+  const handleShareSimpleMessage = async (receipt: any) => {
+    const date = new Date(receipt.completed_at).toLocaleDateString('pt-BR');
+    const itemsCount = receipt.shopping_items ? receipt.shopping_items.length : 0;
+    const total = receipt.total_amount || receipt.shopping_items?.reduce((sum: number, item: any) => sum + (Number(item.price) || 0), 0) || 0;
+    const marketInfo = receipt.market_name ? `\n${receipt.market_name}` : '';
+
+    const text = `🛒 *Compra no Carrin*\n${date}${marketInfo}\n${itemsCount} itens\nTotal: R$ ${Number(total).toFixed(2)}`;
+    executeShare(text);
   };
 
   const handleSharePixMessage = async (total: number, perPerson: number) => {
     const text = `🛒 *Compras no Carrin*\nTotal da compra: R$ ${total.toFixed(2)}\nDividido para ${splitMembers.length}: *R$ ${perPerson.toFixed(2)}* pra cada.\n\nJá podem mandar o Pix! 💸`;
-    
+    executeShare(text);
+    setShowPixModal(false);
+  };
+
+  // Função unificada de compartilhamento utilizando estritamente o padrão seguro de Web Share com fallback limpo
+  const executeShare = async (text: string) => {
     const fallbackCopy = () => {
       if (navigator?.clipboard?.writeText) {
         navigator.clipboard.writeText(text);
@@ -150,18 +278,12 @@ export function History({ isActive }: HistoryProps) {
         document.execCommand('copy');
         textArea.remove();
       }
-      setShowPixModal(false);
-      showFeedback('success', 'Texto copiado! (Compartilhamento exige HTTPS)');
+      showFeedback('success', 'Resumo copiado!');
     };
 
     if (navigator.share && window.isSecureContext) {
       try {
-        await navigator.share({
-          title: 'Resumo da Compra - Carrin',
-          text: text,
-        });
-        setShowPixModal(false);
-        showFeedback('success', 'Resumo compartilhado com sucesso!');
+        await navigator.share({ title: 'Resumo da Compra - Carrin', text: text });
       } catch (error: any) {
         if (error.name !== 'AbortError') {
           console.error("Erro no Share API:", error);
@@ -177,13 +299,25 @@ export function History({ isActive }: HistoryProps) {
     return <p className="text-center text-gray-400 py-10">Carregando histórico...</p>;
   }
 
-  const groupedHistory = historyList.reduce((acc: any, list: any) => {
+  const filteredHistoryList = historyList.filter(list => {
+    if (!searchQuery) return true;
+    const q = normalizeStr(searchQuery);
+    return list.shopping_items?.some((item: any) => normalizeStr(item.name).includes(q));
+  });
+
+  const groupedHistory = filteredHistoryList.reduce((acc: any, list: any) => {
     if (!list.completed_at) return acc;
     const date = new Date(list.completed_at);
     const monthYear = date.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
     
-    if (!acc[monthYear]) acc[monthYear] = [];
-    acc[monthYear].push(list);
+    if (!acc[monthYear]) acc[monthYear] = { lists: [], count: 0, totalSpent: 0 };
+    
+    const total = list.total_amount || list.shopping_items?.reduce((sum: number, item: any) => sum + (Number(item.price) || 0), 0) || 0;
+    
+    acc[monthYear].lists.push(list);
+    acc[monthYear].count += 1;
+    acc[monthYear].totalSpent += total;
+    
     return acc;
   }, {});
 
@@ -205,90 +339,123 @@ export function History({ isActive }: HistoryProps) {
         <p className="text-gray-500 text-sm">Registro das suas compras</p>
       </div>
 
-      {historyList.length === 0 ? (
+      {historyList.length > 0 && (
+        <div className="relative mb-6">
+          <Search size={16} className="absolute left-3 top-3 text-gray-400" />
+          <input
+            type="text"
+            placeholder="Buscar produto no histórico"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full pl-9 pr-8 py-2.5 bg-white border border-gray-100 rounded-small text-sm focus:outline-none focus:border-emerald-600 transition-colors shadow-sm"
+          />
+          {searchQuery && (
+            <button onClick={() => setSearchQuery('')} className="absolute right-3 top-3.5 text-gray-400 hover:text-carrin-dark">
+              <X size={14} />
+            </button>
+          )}
+        </div>
+      )}
+
+      {filteredHistoryList.length === 0 ? (
         <div ref={(el) => registerElement('history-main-area', el)} className="text-center py-12 bg-white rounded-card shadow-sm p-6">
-          <p className="text-gray-400 mb-2 font-bold">Nenhuma compra finalizada.</p>
-          <p className="text-xs text-gray-400">O registro da casa aparecerá aqui após você finalizar o Modo Mercado.</p>
+          <p className="text-gray-400 mb-2 font-bold">{searchQuery ? 'Nenhum resultado encontrado.' : 'Nenhuma compra finalizada.'}</p>
+          <p className="text-xs text-gray-400">{searchQuery ? 'Tente buscar por outro termo.' : 'O registro da casa aparecerá aqui após você finalizar o Modo Mercado.'}</p>
         </div>
       ) : (
         <div ref={(el) => registerElement('history-main-area', el)} className="space-y-8">
-          {Object.keys(groupedHistory).map((monthYear) => (
-            <div key={monthYear} className="space-y-4">
-              <h2 className="text-sm font-bold text-gray-400 uppercase tracking-wider pl-1 capitalize-first">
-                {monthYear}
-              </h2>
-              
-              <div className="space-y-3">
-                {groupedHistory[monthYear].map((list: any) => {
-                  const date = new Date(list.completed_at);
-                  const formattedDate = date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-                  const formattedTime = date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-                  
-                  const itemsCount = list.shopping_items ? list.shopping_items.length : 0;
-                  const total = list.total_amount || list.shopping_items?.reduce((sum: number, item: any) => sum + (Number(item.price) || 0), 0) || 0;
-                  
-                  const involvedUsersMap = new Map();
-                  list.shopping_items?.forEach((i: any) => {
-                    if (i.users) involvedUsersMap.set(i.users.id, i.users);
-                  });
-                  const involvedUsers = Array.from(involvedUsersMap.values());
-                  
-                  const mainUser = involvedUsers[0];
-                  const finisherName = mainUser?.full_name || mainUser?.username?.replace('@', '') || 'Moradores';
-                  const finisherAvatar = mainUser?.avatar_url;
+          {Object.keys(groupedHistory).map((monthYear) => {
+            const data = groupedHistory[monthYear];
+            const avg = data.count > 0 ? data.totalSpent / data.count : 0;
 
-                  return (
-                    <div 
-                      key={list.id} 
-                      onClick={() => setSelectedReceipt(list)}
-                      className="bg-white rounded-card p-4 shadow-sm border border-gray-100 cursor-pointer hover:border-emerald-300 hover:shadow-md transition-all group"
-                    >
-                      <div className="flex justify-between items-start mb-3">
-                        <div>
-                          <div className="flex items-center gap-2 mb-1.5">
-                            <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full flex items-center gap-1">
-                              <CheckCircle2 size={10} /> Concluída
-                            </span>
-                            <span className="text-[10px] text-gray-400 flex items-center gap-1">
-                              <Clock size={10} /> {formattedTime}
-                            </span>
-                          </div>
-                          <p className="text-sm font-extrabold text-carrin-dark flex items-center gap-1.5">
-                            <Calendar size={14} className="text-emerald-600" /> {formattedDate}
-                          </p>
-                        </div>
-                        <div className="text-right">
-                          <p className="text-lg font-extrabold text-carrin-dark flex items-center justify-end gap-1">
-                            <span className="text-xs font-bold text-gray-400">R$</span> 
-                            {Number(total).toFixed(2)}
-                          </p>
-                        </div>
-                      </div>
+            return (
+              <div key={monthYear} className="space-y-4">
+                <div className="pl-1">
+                  <h2 className="text-sm font-bold text-gray-400 uppercase tracking-wider capitalize-first mb-0.5">
+                    {monthYear}
+                  </h2>
+                  <p className="text-[10px] font-medium text-gray-400">
+                    {data.count} {data.count === 1 ? 'compra' : 'compras'} • R$ {data.totalSpent.toFixed(2)} gastos • média R$ {avg.toFixed(2)}
+                  </p>
+                </div>
+                
+                <div className="space-y-3">
+                  {data.lists.map((list: any) => {
+                    const date = new Date(list.completed_at);
+                    const formattedDate = date.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+                    const formattedTime = date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+                    
+                    const itemsCount = list.shopping_items ? list.shopping_items.length : 0;
+                    const total = list.total_amount || list.shopping_items?.reduce((sum: number, item: any) => sum + (Number(item.price) || 0), 0) || 0;
+                    
+                    const involvedUsersMap = new Map();
+                    list.shopping_items?.forEach((i: any) => {
+                      if (i.users) involvedUsersMap.set(i.users.id, i.users);
+                    });
+                    const involvedUsers = Array.from(involvedUsersMap.values());
+                    
+                    const mainUser = involvedUsers[0];
+                    const finisherName = mainUser?.full_name || mainUser?.username?.replace('@', '') || 'Moradores';
+                    const finisherAvatar = mainUser?.avatar_url;
 
-                      <div className="flex items-center justify-between text-xs text-gray-500 border-t border-gray-50 pt-3">
-                        <div className="flex items-center gap-3">
-                          <span className="flex items-center gap-1">
-                            <ShoppingBag size={14} /> {itemsCount} itens
-                          </span>
-                          <div className="flex items-center gap-1.5 font-medium text-carrin-dark">
-                            {finisherAvatar ? (
-                              <img src={finisherAvatar} alt="Avatar" className="w-4 h-4 rounded-full object-cover border border-gray-200" />
-                            ) : (
-                              <div className="w-4 h-4 rounded-full bg-gray-200 flex items-center justify-center text-gray-500">
-                                <User size={10} />
-                              </div>
+                    return (
+                      <div 
+                        key={list.id} 
+                        onClick={() => setSelectedReceiptId(list.id)}
+                        className="bg-white rounded-card p-4 shadow-sm border border-gray-100 cursor-pointer hover:border-emerald-300 hover:shadow-md transition-all group flex flex-col gap-3"
+                      >
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <div className="flex items-center gap-2 mb-1.5">
+                              <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full flex items-center gap-1">
+                                <CheckCircle2 size={10} /> Concluída
+                              </span>
+                              <span className="text-[10px] text-gray-400 flex items-center gap-1">
+                                <Clock size={10} /> {formattedTime}
+                              </span>
+                            </div>
+                            {list.market_name && (
+                              <p className="text-[11px] font-extrabold uppercase tracking-wider text-carrin-dark flex items-center gap-1 mb-1">
+                                <Store size={12} className="text-gray-400" /> {list.market_name}
+                              </p>
                             )}
-                            <span className="truncate max-w-[100px]">{finisherName}</span>
+                            <p className="text-xs font-bold text-gray-500 flex items-center gap-1.5">
+                              <Calendar size={12} className="text-gray-400" /> {formattedDate}
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-lg font-extrabold text-carrin-dark flex items-center justify-end gap-1">
+                              <span className="text-xs font-bold text-gray-400">R$</span> 
+                              {Number(total).toFixed(2)}
+                            </p>
                           </div>
                         </div>
-                        <ChevronRight size={16} className="text-gray-300 group-hover:text-emerald-500 transition-colors shrink-0" />
+
+                        <div className="flex items-center justify-between text-xs text-gray-500 border-t border-gray-50 pt-3">
+                          <div className="flex items-center gap-3">
+                            <span className="flex items-center gap-1">
+                              <ShoppingBag size={14} /> {itemsCount} itens
+                            </span>
+                            <div className="flex items-center gap-1.5 font-medium text-carrin-dark">
+                              {finisherAvatar ? (
+                                <img src={finisherAvatar} alt="Avatar" className="w-4 h-4 rounded-full object-cover border border-gray-200" />
+                              ) : (
+                                <div className="w-4 h-4 rounded-full bg-gray-200 flex items-center justify-center text-gray-500">
+                                  <User size={10} />
+                                </div>
+                              )}
+                              <span className="truncate max-w-[100px]">{finisherName}</span>
+                            </div>
+                          </div>
+                          <ChevronRight size={16} className="text-gray-300 group-hover:text-emerald-500 transition-colors shrink-0" />
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -303,6 +470,24 @@ export function History({ isActive }: HistoryProps) {
         
         const total = selectedReceipt.total_amount || boughtItems.reduce((sum: number, item: any) => sum + (Number(item.price) || 0), 0) || 0;
         
+        const currentIndex = historyList.findIndex(h => h.id === selectedReceipt.id);
+        const prevReceipt = (currentIndex >= 0 && currentIndex < historyList.length - 1) ? historyList[currentIndex + 1] : null;
+        let diffText = null;
+        let diffColor = "text-gray-400";
+        if (prevReceipt) {
+          const prevTotal = prevReceipt.total_amount || prevReceipt.shopping_items?.reduce((sum: number, item: any) => sum + (Number(item.price) || 0), 0) || 0;
+          const diff = total - prevTotal;
+          if (Math.abs(diff) < 0.01) {
+            diffText = "Mesmo total da compra anterior";
+          } else if (diff > 0) {
+            diffText = `R$ ${diff.toFixed(2)} a mais que a compra anterior`;
+            diffColor = "text-red-400";
+          } else {
+            diffText = `R$ ${Math.abs(diff).toFixed(2)} a menos que a compra anterior`;
+            diffColor = "text-emerald-500";
+          }
+        }
+
         const mostExpensive = boughtItems.reduce((prev: any, current: any) => {
           return (Number(prev?.price) || 0) > (Number(current.price) || 0) ? prev : current;
         }, null);
@@ -324,7 +509,10 @@ export function History({ isActive }: HistoryProps) {
               
               <div className="bg-white p-5 border-b border-dashed border-gray-300 relative shrink-0">
                 <button 
-                  onClick={() => setSelectedReceipt(null)}
+                  onClick={() => {
+                    setSelectedReceiptId(null);
+                    setIsEditingMarket(false);
+                  }}
                   className="absolute top-4 right-4 text-gray-400 hover:text-carrin-dark bg-gray-50 hover:bg-gray-100 p-1.5 rounded-full transition-colors"
                 >
                   <X size={18} />
@@ -332,6 +520,49 @@ export function History({ isActive }: HistoryProps) {
                 <h2 className="text-xl font-extrabold text-carrin-dark mb-1">Recibo da Compra</h2>
                 <p className="text-xs text-gray-500 font-medium">{fullDate} às {time}</p>
                 
+                <div className="mt-3">
+                  {isEditingMarket ? (
+                    <div className="flex gap-2 items-center">
+                      <input 
+                        type="text" 
+                        autoFocus
+                        placeholder="Nome do mercado"
+                        value={editMarketName}
+                        onChange={(e) => setEditMarketName(e.target.value)}
+                        className="flex-1 px-3 py-1.5 text-sm border border-gray-200 rounded focus:outline-none focus:border-emerald-500"
+                      />
+                      <button onClick={handleSaveMarketEdit} className="bg-emerald-600 text-white p-1.5 rounded hover:bg-emerald-700">
+                        <Check size={16} />
+                      </button>
+                      <button onClick={() => setIsEditingMarket(false)} className="bg-gray-100 text-gray-600 p-1.5 rounded hover:bg-gray-200">
+                        <X size={16} />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 group w-max">
+                      {selectedReceipt.market_name ? (
+                        <>
+                          <Store size={14} className="text-gray-400" />
+                          <span className="text-sm font-extrabold uppercase text-carrin-dark tracking-wider">{selectedReceipt.market_name}</span>
+                          <button 
+                            onClick={() => { setEditMarketName(selectedReceipt.market_name); setIsEditingMarket(true); }}
+                            className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-emerald-600 transition-all p-1"
+                          >
+                            <Edit2 size={12} />
+                          </button>
+                        </>
+                      ) : (
+                        <button 
+                          onClick={() => { setEditMarketName(''); setIsEditingMarket(true); }}
+                          className="text-[11px] font-bold text-emerald-600 hover:text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-2 py-1 rounded-full transition-colors flex items-center gap-1"
+                        >
+                          <Plus size={12} /> Adicionar mercado
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+
                 <div className="mt-4 p-3 bg-gray-50 rounded-small border border-gray-100 flex justify-between items-center">
                   <div>
                     <p className="text-[10px] uppercase font-bold text-gray-400 tracking-wider mb-1">Colaboradores</p>
@@ -354,22 +585,34 @@ export function History({ isActive }: HistoryProps) {
                     </p>
                   </div>
                 </div>
+                {diffText && (
+                  <p className={`text-[10px] font-bold text-right mt-1.5 ${diffColor}`}>
+                    {diffText}
+                  </p>
+                )}
               </div>
 
               <div className="p-5 overflow-y-auto space-y-6">
                 
-                {total > 0 && homeMembers.length > 1 && (
+                <div className="flex gap-2">
                   <button
-                    onClick={() => {
-                      setSplitMembers(homeMembers.map(m => m.users?.id).filter(Boolean));
-                      setShowPixModal(true);
-                    }}
-                    className="w-full bg-emerald-50 text-emerald-700 py-3 rounded-small text-xs font-bold flex items-center justify-center gap-2 hover:bg-emerald-100 transition-all shadow-sm border border-emerald-100"
+                    onClick={() => handleShareSimpleMessage(selectedReceipt)}
+                    className="flex-1 bg-white text-carrin-dark py-2.5 rounded-small text-xs font-bold flex items-center justify-center gap-1.5 hover:bg-gray-50 transition-all shadow-sm border border-gray-200"
                   >
-                    <Wallet size={16} />
-                    <span>Dividir Conta desta Compra</span>
+                    <Share2 size={14} /> Compartilhar Resumo
                   </button>
-                )}
+                  {total > 0 && homeMembers.length > 1 && (
+                    <button
+                      onClick={() => {
+                        setSplitMembers(homeMembers.map(m => m.users?.id).filter(Boolean));
+                        setShowPixModal(true);
+                      }}
+                      className="flex-1 bg-emerald-50 text-emerald-700 py-2.5 rounded-small text-xs font-bold flex items-center justify-center gap-1.5 hover:bg-emerald-100 transition-all shadow-sm border border-emerald-100"
+                    >
+                      <Wallet size={14} /> Dividir Conta
+                    </button>
+                  )}
+                </div>
 
                 {mostExpensive && Number(mostExpensive.price) > 0 && (
                   <div className="flex items-center gap-3 bg-orange-50 text-orange-800 p-3 rounded-small border border-orange-100">
@@ -388,10 +631,10 @@ export function History({ isActive }: HistoryProps) {
 
                 {boughtItems.length > 0 && (
                   <div>
-                    <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 border-b border-dashed border-gray-200 pb-2">
-                      Comprados ({boughtItems.length})
+                    <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 border-b border-dashed border-gray-200 pb-2 flex justify-between items-center">
+                      <span>Comprados ({boughtItems.length})</span>
                     </h3>
-                    <div className="space-y-2">
+                    <div className="space-y-2 mb-4">
                       {boughtItems.map((item: any) => (
                         <div key={item.id} className="flex justify-between items-center text-sm">
                           <div className="flex items-center gap-2 overflow-hidden pr-2">
@@ -411,34 +654,62 @@ export function History({ isActive }: HistoryProps) {
                         </div>
                       ))}
                     </div>
-                  </div>
-                )}
-
-                {unboughtItems.length > 0 && (
-                  <div>
-                    <h3 className="text-xs font-bold text-red-400 uppercase tracking-wider mb-3 border-b border-dashed border-red-200 pb-2 flex items-center justify-between">
-                      <span>Faltaram ({unboughtItems.length})</span>
-                    </h3>
-                    
-                    <div className="space-y-2 mb-4">
-                      {unboughtItems.map((item: any) => (
-                        <div key={item.id} className="flex items-center gap-2 text-sm opacity-60">
-                          <span className="text-gray-400 shrink-0"><X size={14} /></span>
-                          <span className="text-gray-600 line-through truncate">{item.name}</span>
-                        </div>
-                      ))}
-                    </div>
 
                     <button 
-                      onClick={() => handleRestoreUnboughtItems(unboughtItems)}
-                      disabled={restoring}
+                      onClick={() => handleOpenBuyAgain(selectedReceipt.id)}
+                      disabled={preparingBuyAgain}
                       className="w-full bg-carrin-dark text-white py-2.5 rounded-small text-xs font-bold flex items-center justify-center gap-2 hover:bg-gray-800 transition-all shadow-sm disabled:opacity-50"
                     >
-                      <RotateCcw size={14} />
-                      <span>{restoring ? 'Restaurando...' : 'Reaproveitar itens faltantes'}</span>
+                      <CopyPlus size={14} />
+                      <span>{preparingBuyAgain ? 'Preparando...' : 'Comprar novamente'}</span>
                     </button>
                   </div>
                 )}
+
+                {unboughtItems.length > 0 && (() => {
+                  const allUnboughtAreInList = unboughtItems.length > 0 && unboughtItems.every((i: any) => activeListNames.includes(normalizeStr(i.name)));
+                  
+                  return (
+                    <div>
+                      <h3 className="text-xs font-bold text-red-400 uppercase tracking-wider mb-3 border-b border-dashed border-red-200 pb-2 flex items-center justify-between">
+                        <span>Faltaram ({unboughtItems.length})</span>
+                      </h3>
+                      
+                      <div className="space-y-2 mb-4">
+                        {unboughtItems.map((item: any) => {
+                          const inList = activeListNames.includes(normalizeStr(item.name));
+                          return (
+                            <div key={item.id} className="flex items-center gap-2 text-sm opacity-60">
+                              <span className="text-gray-400 shrink-0"><X size={14} /></span>
+                              <span className="text-gray-600 line-through truncate">{item.name}</span>
+                              {inList && <span className="text-[10px] text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded font-bold ml-auto">Já na lista</span>}
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      <button 
+                        onClick={() => handleRestoreUnboughtItems(unboughtItems)}
+                        disabled={restoring || allUnboughtAreInList}
+                        className="w-full bg-white border border-gray-200 text-carrin-dark py-2.5 rounded-small text-xs font-bold flex items-center justify-center gap-2 hover:bg-gray-50 transition-all shadow-sm disabled:opacity-50"
+                      >
+                        {restoring ? (
+                          <>
+                            <RotateCcw size={14} className="animate-spin" /> Restaurando...
+                          </>
+                        ) : allUnboughtAreInList ? (
+                          <>
+                            <Check size={14} className="text-emerald-600" /> <span className="text-emerald-700">Adicionado à lista ✓</span>
+                          </>
+                        ) : (
+                          <>
+                            <RotateCcw size={14} /> Reaproveitar itens faltantes
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  );
+                })()}
 
                 {selectedReceipt.receipt_urls && selectedReceipt.receipt_urls.length > 0 && (
                   <div>
@@ -466,6 +737,74 @@ export function History({ isActive }: HistoryProps) {
                     </p>
                   </div>
                 )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {buyAgainReceipt && (() => {
+        const itemsToSelect = buyAgainReceipt.shopping_items?.filter((i: any) => i.is_completed) || [];
+        const selectedCount = itemsToSelect.filter((i: any) => buyAgainSelections[i.id] && !activeListNames.includes(normalizeStr(i.name))).length;
+
+        return (
+          <div className="fixed inset-0 z-[60] bg-black/70 flex items-center justify-center p-4 animate-in fade-in duration-200">
+            <div className="bg-white w-full max-w-sm max-h-[85vh] rounded-card shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
+              <div className="p-5 border-b border-gray-100 shrink-0">
+                <div className="flex justify-between items-center mb-2">
+                  <div className="flex items-center gap-2 text-carrin-dark">
+                    <CopyPlus size={20} className="text-emerald-600" />
+                    <h3 className="text-lg font-bold">Comprar Novamente</h3>
+                  </div>
+                  <button onClick={() => setBuyAgainReceiptId(null)} className="text-gray-400 hover:text-carrin-dark p-1 bg-gray-50 rounded-full">
+                    <X size={16} />
+                  </button>
+                </div>
+                <p className="text-xs text-gray-500">Selecione os itens que deseja enviar de volta para sua Lista atual. Itens que já estão pendentes na sua casa foram desmarcados.</p>
+              </div>
+
+              <div className="p-5 overflow-y-auto space-y-1">
+                {itemsToSelect.map((item: any) => {
+                  const inList = activeListNames.includes(normalizeStr(item.name));
+                  const isSelected = buyAgainSelections[item.id] && !inList;
+                  
+                  return (
+                    <div 
+                      key={item.id} 
+                      onClick={() => !inList && toggleBuyAgainSelection(item.id)}
+                      className={`flex items-center justify-between p-3 rounded-small border transition-all ${inList ? 'opacity-50 cursor-not-allowed bg-gray-50 border-gray-100' : isSelected ? 'border-emerald-500 bg-emerald-50 cursor-pointer' : 'border-gray-100 bg-white hover:bg-gray-50 cursor-pointer'}`}
+                    >
+                      <div className="flex items-center gap-3 overflow-hidden">
+                        <div className={`w-5 h-5 rounded flex items-center justify-center border shrink-0 transition-colors ${inList ? 'border-gray-300 bg-gray-100' : isSelected ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-gray-300 text-transparent bg-white'}`}>
+                          <Check size={14} strokeWidth={3} />
+                        </div>
+                        <div className="flex flex-col overflow-hidden">
+                          <span className={`text-sm font-bold truncate ${inList ? 'text-gray-500' : isSelected ? 'text-emerald-800' : 'text-gray-600'}`}>
+                            {item.name}
+                          </span>
+                          {(item.quantity || item.unit) && (
+                            <span className={`text-[10px] font-medium ${isSelected && !inList ? 'text-emerald-600/70' : 'text-gray-400'}`}>
+                              {item.quantity} {item.unit}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      {inList && (
+                        <span className="text-[10px] font-bold text-gray-400 bg-gray-100 px-2 py-1 rounded">Já na lista</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="p-5 border-t border-gray-100 shrink-0">
+                <button 
+                  onClick={handleConfirmBuyAgain}
+                  disabled={selectedCount === 0 || buyingAgain}
+                  className="w-full bg-emerald-600 text-white py-3 rounded-small text-sm font-bold flex items-center justify-center gap-2 hover:bg-emerald-700 transition-all disabled:opacity-50 shadow-sm"
+                >
+                  {buyingAgain ? 'Adicionando...' : `Adicionar à Lista (${selectedCount})`}
+                </button>
               </div>
             </div>
           </div>

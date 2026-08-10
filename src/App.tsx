@@ -13,6 +13,7 @@ function App() {
   const { user, setUser, homeId, setHomeId, isRecoveringPassword, setIsRecoveringPassword } = useAuthStore();
   
   const [isInitializing, setIsInitializing] = useState(true);
+  const [isCheckingHome, setIsCheckingHome] = useState(false);
   const [pendingDirectInviteId, setPendingDirectInviteId] = useState<string | null>(null);
   const [fadeIn, setFadeIn] = useState(false);
 
@@ -55,7 +56,6 @@ function App() {
 
     initializeApp();
 
-    // Listener de autenticação silencioso
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       const currentUser = session?.user ?? null;
       
@@ -69,13 +69,28 @@ function App() {
         setHomeId(null);
         setPendingDirectInviteId(null);
         setIsRecoveringPassword(false);
+        setIsCheckingHome(false);
         window.history.replaceState({ appState: 'auth' }, '', '/');
       } 
       else if (event === 'SIGNED_IN' && currentUser) {
+         // CORREÇÃO PWA: Bloqueia unmounts acidentais ao trocar de aba se a sessão já estiver ativa
+         const currentState = useAuthStore.getState();
+         if (currentState.user?.id === currentUser.id && currentState.homeId !== undefined) {
+             return; 
+         }
+
+         setIsCheckingHome(true); 
          setUser(currentUser, session);
-         homeService.getUserHome(currentUser.id).then(home => {
-           setHomeId(home ? home.home_id : null);
-         });
+         
+         homeService.getUserHome(currentUser.id)
+           .then(home => {
+             setHomeId(home ? home.home_id : null);
+           })
+           .catch(err => console.error("Erro ao buscar Casa após o login:", err))
+           .finally(() => {
+             setIsCheckingHome(false);
+           });
+           
          window.history.replaceState({ appState: 'ready' }, '', window.location.pathname);
       } 
       else if ((event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') && currentUser) {
@@ -96,15 +111,13 @@ function App() {
     };
   }, [isInviteRoute, setHomeId, setUser, setIsRecoveringPassword, isInitializing]);
 
-  if (isInitializing) return <Splash />;
+  if (isInitializing || isCheckingHome) return <Splash />;
 
   const renderContent = () => {
-    // 1. Se estiver tentando recuperar a senha, trava na tela de Auth ignorando outras rotas
     if (isRecoveringPassword) {
       return <Auth />;
     }
 
-    // 2. Fluxo de convites
     if (isInviteRoute && inviteId) {
       if (!user) {
         return (
@@ -124,7 +137,6 @@ function App() {
       return <InviteView inviteId={pendingDirectInviteId} onAccepted={() => { window.location.href = '/'; }} />;
     }
 
-    // 3. Aplicação Padrão
     if (!user) return <Auth />;
     if (!homeId) return <NoHomeView onHomeCreated={(id) => setHomeId(id)} />;
     

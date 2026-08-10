@@ -1,12 +1,12 @@
-import { useState, useRef } from 'react';
-import { X, Camera, CheckCircle2, DollarSign, ShoppingBag, Trash2 } from 'lucide-react';
+import { useState, useRef, useEffect } from 'react';
+import { X, Camera, CheckCircle2, DollarSign, ShoppingBag, Trash2, Store } from 'lucide-react';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { historyService } from '../../services/historyService';
 
 interface FinishShoppingModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onConfirm: (receiptUrls: string[]) => Promise<void>;
+  onConfirm: (receiptUrls: string[], marketName?: string) => Promise<void>;
   totalAmount: number;
   totalItems: number;
   loading: boolean;
@@ -22,14 +22,20 @@ export function FinishShoppingModal({
 }: FinishShoppingModalProps) {
   const { homeId } = useAuthStore();
   
-  // Guardamos o arquivo real para enviar ao banco
   const [receiptFiles, setReceiptFiles] = useState<File[]>([]);
-  // Guardamos uma URL temporária apenas para mostrar a imagem na tela
   const [previewUrls, setPreviewUrls] = useState<string[]>([]);
+  const [marketName, setMarketName] = useState('');
+  const [recentMarkets, setRecentMarkets] = useState<string[]>([]);
   
   const [isCompletedState, setIsCompletedState] = useState(false);
   const [localLoading, setLocalLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (isOpen && homeId) {
+      historyService.getRecentMarkets(homeId).then(setRecentMarkets).catch(console.error);
+    }
+  }, [isOpen, homeId]);
 
   if (!isOpen) return null;
 
@@ -43,12 +49,8 @@ export function FinishShoppingModal({
     }
 
     const file = files[0];
-    
-    // Salva o arquivo real
     setReceiptFiles(prev => [...prev, file]);
-    // Cria uma URL local rápida para mostrar a miniatura na hora
     setPreviewUrls(prev => [...prev, URL.createObjectURL(file)]);
-    
     e.target.value = '';
   };
 
@@ -62,38 +64,35 @@ export function FinishShoppingModal({
     setLocalLoading(true);
 
     try {
-      // 1. Faz o upload de todas as fotos para o Storage e guarda os links gerados
       const uploadedUrls: string[] = [];
       for (const file of receiptFiles) {
         const url = await historyService.uploadReceipt(file, homeId);
         uploadedUrls.push(url);
       }
 
-      // 2. Executa o salvamento e desativação do Modo Mercado passando as URLs finais
-      await onConfirm(uploadedUrls);
+      await onConfirm(uploadedUrls, marketName.trim() || undefined);
 
-      // 3. Exibe o estado especial de sucesso por 3 segundos
       setIsCompletedState(true);
 
       setTimeout(() => {
         setIsCompletedState(false);
         setReceiptFiles([]);
         setPreviewUrls([]);
+        setMarketName('');
         setLocalLoading(false);
         onClose();
       }, 3000);
     } catch (error) {
       console.error("Erro ao finalizar:", error);
-      alert("Houve um erro ao salvar as fotos. Tente novamente.");
+      alert("Houve um erro ao salvar os detalhes. Tente novamente.");
       setLocalLoading(false);
     }
   };
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-      <div className="bg-white w-full max-w-md rounded-card p-6 shadow-2xl animate-in zoom-in-95 duration-200">
+      <div className="bg-white w-full max-w-md max-h-[90vh] overflow-y-auto rounded-card p-6 shadow-2xl animate-in zoom-in-95 duration-200">
         
-        {/* Estado Especial: Compra Concluída (Exibição por 3 segundos) */}
         {isCompletedState ? (
           <div className="text-center py-10 space-y-3 animate-in fade-in duration-200">
             <CheckCircle2 size={64} className="text-emerald-600 mx-auto animate-bounce" />
@@ -112,7 +111,6 @@ export function FinishShoppingModal({
               </button>
             </div>
 
-            {/* Bloco de Indicadores da Compra */}
             <div className="bg-gray-50 border border-gray-100 rounded-card p-4 mb-6 space-y-3">
               <div className="flex justify-between items-center">
                 <span className="text-sm text-gray-500 flex items-center gap-1.5">
@@ -130,7 +128,38 @@ export function FinishShoppingModal({
               </div>
             </div>
 
-            {/* Seção de Nota Fiscal (Câmera Nativa / Até 3 fotos) */}
+            {/* Novo Bloco do Mercado */}
+            <div className="mb-6">
+              <label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 block">
+                Onde você comprou?
+              </label>
+              <div className="relative">
+                <Store size={18} className="absolute left-3 top-3 text-gray-400" />
+                <input 
+                  type="text"
+                  placeholder="Nome do mercado (opcional)"
+                  value={marketName}
+                  onChange={(e) => setMarketName(e.target.value)}
+                  className="w-full pl-10 pr-3 py-2.5 bg-white border border-gray-200 rounded-small text-sm focus:outline-none focus:border-emerald-600 transition-colors"
+                />
+              </div>
+              <p className="text-[11px] text-gray-400 mt-1">Isso ajuda a organizar seu Histórico.</p>
+              
+              {recentMarkets.length > 0 && !marketName && (
+                <div className="flex flex-wrap gap-2 mt-3">
+                  {recentMarkets.map((market, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => setMarketName(market)}
+                      className="text-xs font-semibold bg-gray-100 text-gray-600 px-3 py-1.5 rounded-full hover:bg-gray-200 transition-colors"
+                    >
+                      {market}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <div className="mb-6">
               <div className="flex justify-between items-center mb-2">
                 <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">
@@ -176,7 +205,6 @@ export function FinishShoppingModal({
               </div>
             </div>
 
-            {/* Ações */}
             <div className="flex gap-3">
               <button
                 type="button"

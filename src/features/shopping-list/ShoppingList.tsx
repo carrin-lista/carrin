@@ -10,7 +10,7 @@ import { Home } from '../home/Home';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { itemService } from '../../services/itemService';
 import { historyService } from '../../services/historyService';
-import { CheckCheck, ShoppingCart, X, AlertCircle, Play, Search, ListFilter, Plus, Minus } from 'lucide-react';
+import { CheckCheck, ShoppingCart, X, AlertCircle, Play, Search, ListFilter, Plus, Minus, MoreVertical, Check, User, RotateCcw } from 'lucide-react';
 import { NotificationBell } from '../notifications/NotificationBell';
 import { PushPermissionModal } from './PushPermissionModal'; 
 import { notificationService } from '../../services/notificationService';
@@ -26,6 +26,10 @@ const EMPTY_MESSAGES = [
   "Tudo abastecido! Adicione itens quando precisar."
 ];
 
+const normalizeStr = (str: string) => {
+  return str ? str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase() : '';
+};
+
 export function ShoppingList() {
   const { user, homeId } = useAuthStore();
   const { registerElement, startTutorial, activeTutorial } = useTutorialStore();
@@ -37,7 +41,7 @@ export function ShoppingList() {
   const [activeListId, setActiveListId] = useState<string | null>(null);
   
   const [searchQuery, setSearchQuery] = useState('');
-  const [sortBy, setSortBy] = useState<'category' | 'alphabetical' | 'recent'>('category');
+  const [sortBy, setSortBy] = useState<'category' | 'alphabetical' | 'recent' | 'oldest' | 'resident'>('category');
   const [emptyMessage, setEmptyMessage] = useState(EMPTY_MESSAGES[0]);
 
   const [isMarketMode, setIsMarketMode] = useState(() => {
@@ -48,10 +52,12 @@ export function ShoppingList() {
     return localStorage.getItem('carrin_market_session_active') === 'true';
   });
   
+  // Status Ultra Discreto do Modo Mercado
+  const [syncStatus, setSyncStatus] = useState<'Salvando...' | 'Salvo ✓' | 'Sem conexão • pendente' | null>(null);
+
   const [showFabTooltip, setShowFabTooltip] = useState(false);
   const [showTutorial, setShowTutorial] = useState(false);
   
-  // MODAL DE COMPRA (MERCADO)
   const [priceModalItem, setPriceModalItem] = useState<any | null>(null);
   const [priceInput, setPriceInput] = useState('');
   const [boughtQty, setBoughtQty] = useState<number>(1);
@@ -68,15 +74,23 @@ export function ShoppingList() {
   
   const [userPrefs, setUserPrefs] = useState<any>(null);
 
-  // CONTROLE DE PRIORIDADE: Push Modal vs Tutorial
+  // LIMPEZA EM LOTE E DESFAZER
+  const [showListMenu, setShowListMenu] = useState(false);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [clearingList, setClearingList] = useState(false);
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
+
+  const [undoDelete, setUndoDelete] = useState<{ item: any, timerId: NodeJS.Timeout } | null>(null);
+  const [undoClear, setUndoClear] = useState<{ items: any[], timerId: NodeJS.Timeout } | null>(null);
+
   const [pushPromptResolved, setPushPromptResolved] = useState(() => {
     if (!('Notification' in window)) return true;
     if (Notification.permission !== 'default') return true;
     if (localStorage.getItem('carrin_push_prompt_seen')) return true;
-    return false; // Precisa resolver o modal de push primeiro
+    return false;
   });
 
-  const isAnyModalOpen = !!(priceModalItem || itemToUncheck || showTutorial || isFinishModalOpen || isModalOpen || showPushPrompt);
+  const isAnyModalOpen = !!(priceModalItem || itemToUncheck || showTutorial || isFinishModalOpen || isModalOpen || showPushPrompt || showClearConfirm);
 
   useEffect(() => {
     if (isAnyModalOpen) {
@@ -98,11 +112,8 @@ export function ShoppingList() {
     loadPrefs();
   }, [user?.id]);
 
-  // SEQUENCIAMENTO DO TUTORIAL
   useEffect(() => {
-    if (!pushPromptResolved) return; // Aguarda o modal de notificações ser resolvido
-    if (!userPrefs || userPrefs.tutorial_version !== 1) return;
-    if (activeTutorial) return;
+    if (!pushPromptResolved || !userPrefs || userPrefs.tutorial_version !== 1 || activeTutorial) return;
 
     const state = userPrefs.tutorial_state || {};
     const tabToTutorialKey: Record<string, string> = {
@@ -113,18 +124,12 @@ export function ShoppingList() {
     };
 
     const currentKey = tabToTutorialKey[currentTab];
-    
     if (currentKey && state[currentKey] === 'pending') {
       setUserPrefs((prev: any) => ({
         ...prev,
-        tutorial_state: {
-          ...prev.tutorial_state,
-          [currentKey]: 'started'
-        }
+        tutorial_state: { ...prev.tutorial_state, [currentKey]: 'started' }
       }));
-      setTimeout(() => {
-        startTutorial(currentKey as any);
-      }, 500);
+      setTimeout(() => startTutorial(currentKey as any), 500);
     }
   }, [currentTab, userPrefs, activeTutorial, startTutorial, pushPromptResolved]);
 
@@ -149,10 +154,8 @@ export function ShoppingList() {
         const listId = await itemService.getActiveListId(homeId);
         setActiveListId(listId);
         await fetchItems();
-
         const prefs = await preferenceService.getHomeCategoryPreferences(homeId);
         setHomePreferences(prefs);
-
       } catch (error) {
         console.error("Erro ao carregar dados:", error);
       } finally {
@@ -191,6 +194,7 @@ export function ShoppingList() {
       return () => clearTimeout(timer);
     } else {
       setShowFabTooltip(false);
+      setShowListMenu(false); 
     }
   }, [isMarketMode]);
 
@@ -200,7 +204,6 @@ export function ShoppingList() {
     }
   }, [items.length, loading]);
 
-  // SEQUENCIAMENTO DE NOTIFICAÇÕES
   useEffect(() => {
     if (!pushPromptResolved) {
       const timer = setTimeout(() => setShowPushPrompt(true), 3000);
@@ -211,14 +214,14 @@ export function ShoppingList() {
   const handleEnablePush = async () => {
     localStorage.setItem('carrin_push_prompt_seen', 'true');
     setShowPushPrompt(false);
-    setPushPromptResolved(true); // Libera o tutorial
+    setPushPromptResolved(true);
     if (user) await notificationService.subscribeToPushNotifications(user.id);
   };
 
   const handleDeclinePush = () => {
     localStorage.setItem('carrin_push_prompt_seen', 'true');
     setShowPushPrompt(false);
-    setPushPromptResolved(true); // Libera o tutorial
+    setPushPromptResolved(true);
   };
 
   const handleToggleMarketMode = () => {
@@ -254,7 +257,6 @@ export function ShoppingList() {
       setPriceModalItem(item);
       setBoughtQty(item.quantity ? Number(item.quantity) : 1);
       
-      // O input de preço no modo mercado é o Unit Price
       if (item.unit_price) {
         setPriceInput(Number(item.unit_price).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
       } else {
@@ -288,10 +290,17 @@ export function ShoppingList() {
       } : i
     ));
 
+    if (isMarketMode) setSyncStatus('Salvando...');
+
     try {
       await itemService.toggleItemCompletion(itemId, isCompleted, price || 0, unitPrice || 0, boughtQuantity || 0);
+      if (isMarketMode) {
+        setSyncStatus('Salvo ✓');
+        setTimeout(() => setSyncStatus(null), 2500);
+      }
     } catch (error) {
       console.error("Erro ao atualizar item:", error);
+      if (isMarketMode) setSyncStatus('Sem conexão • pendente');
     }
   };
 
@@ -320,14 +329,124 @@ export function ShoppingList() {
     setPriceInput('');
   };
 
+  const handleUpdateCategory = async (itemId: string, newCategoryId: string) => {
+    const item = items.find(i => i.id === itemId);
+    if (!item || !homeId || !user) return;
+
+    // Atualiza otimista
+    setItems(items.map(i => i.id === itemId ? { ...i, category_id: newCategoryId } : i));
+    
+    if (isMarketMode) setSyncStatus('Salvando...');
+    try {
+      await itemService.updateItem(itemId, { category_id: newCategoryId });
+      const normalizedName = item.name.trim().toLowerCase().replace(/\s+/g, ' ');
+      await preferenceService.saveHomeCategoryPreference(homeId, normalizedName, newCategoryId, user.id);
+      
+      if (isMarketMode) {
+        setSyncStatus('Salvo ✓');
+        setTimeout(() => setSyncStatus(null), 2500);
+      }
+    } catch (error) {
+      console.error(error);
+      if (isMarketMode) setSyncStatus('Sem conexão • pendente');
+    }
+  };
+
   const handleDelete = async (id: string) => {
+    const itemToDelete = items.find(i => i.id === id);
+    if (!itemToDelete) return;
+    
     const previousItems = [...items];
     setItems(items.filter(item => item.id !== id));
+    
     try {
       await itemService.deleteItem(id);
+      
+      if (undoDelete?.timerId) clearTimeout(undoDelete.timerId);
+      const timerId = setTimeout(() => setUndoDelete(null), 5000);
+      setUndoDelete({ item: itemToDelete, timerId });
     } catch (error) {
       console.error("Erro ao deletar item:", error);
       setItems(previousItems);
+      alert("Erro ao excluir o item. Verifique sua conexão.");
+    }
+  };
+
+  const handleUndoDelete = async () => {
+    if (!undoDelete || !homeId || !user) return;
+    clearTimeout(undoDelete.timerId);
+    const item = undoDelete.item;
+    setUndoDelete(null);
+
+    try {
+      await itemService.addItem({
+        name: item.name,
+        quantity: item.quantity,
+        unit: item.unit,
+        observation: item.observation,
+        category_id: item.category_id || '🛒 Mantimentos',
+        home_id: homeId,
+        created_by: user.id
+      } as any);
+      setToastMsg('Item restaurado');
+      setTimeout(() => setToastMsg(null), 3000);
+    } catch (error) {
+      console.error("Erro ao desfazer exclusão:", error);
+    }
+  };
+
+  const handleClearList = async () => {
+    if (!activeListId || clearingList) return;
+    const snapshot = [...items];
+    setClearingList(true);
+    
+    try {
+      await itemService.clearActiveList(activeListId);
+      setItems([]);
+      
+      if (undoClear?.timerId) clearTimeout(undoClear.timerId);
+      const timerId = setTimeout(() => setUndoClear(null), 5000);
+      setUndoClear({ items: snapshot, timerId });
+    } catch (error) {
+      console.error("Erro ao limpar a lista:", error);
+      alert("Houve um erro ao limpar a lista. Verifique sua conexão.");
+    } finally {
+      setClearingList(false);
+      setShowClearConfirm(false);
+      setShowListMenu(false);
+    }
+  };
+
+  const handleUndoClear = async () => {
+    if (!undoClear || !homeId || !user) return;
+    clearTimeout(undoClear.timerId);
+    const snapshot = undoClear.items;
+    setUndoClear(null);
+
+    setToastMsg('Restaurando itens...');
+    try {
+      const currentActive = await itemService.getItems(homeId);
+      const currentNames = currentActive.map(i => normalizeStr(i.name));
+      const itemsToAdd = snapshot.filter(item => !currentNames.includes(normalizeStr(item.name)));
+
+      await Promise.all(itemsToAdd.map(item =>
+        itemService.addItem({
+          name: item.name,
+          quantity: item.quantity,
+          unit: item.unit,
+          observation: item.observation,
+          category_id: item.category_id || '🛒 Mantimentos',
+          home_id: homeId,
+          created_by: user.id
+        } as any)
+      ));
+      
+      setToastMsg('Lista restaurada ✓');
+      setTimeout(() => setToastMsg(null), 3000);
+    } catch (error) {
+      console.error("Erro ao restaurar a lista:", error);
+      setToastMsg('Erro ao restaurar');
+      setTimeout(() => setToastMsg(null), 3000);
     }
   };
 
@@ -346,7 +465,16 @@ export function ShoppingList() {
       setItems(items.map(item => 
         item.id === editingItem.id ? { ...item, ...formattedData } : item
       ));
-      await itemService.updateItem(editingItem.id, formattedData);
+      if (isMarketMode) setSyncStatus('Salvando...');
+      try {
+        await itemService.updateItem(editingItem.id, formattedData);
+        if (isMarketMode) {
+          setSyncStatus('Salvo ✓');
+          setTimeout(() => setSyncStatus(null), 2500);
+        }
+      } catch (err) {
+        if (isMarketMode) setSyncStatus('Sem conexão • pendente');
+      }
     } else {
       const newItem = { ...formattedData, home_id: homeId, created_by: user.id };
       const savedItem = await itemService.addItem(newItem as any);
@@ -364,12 +492,12 @@ export function ShoppingList() {
     setIsFinishModalOpen(true);
   };
 
-  const handleConfirmFinishShopping = async (receiptUrls: string[]) => {
+  const handleConfirmFinishShopping = async (receiptUrls: string[], marketName?: string) => {
     if (!homeId || !activeListId || finishing) return;
 
     setFinishing(true);
     try {
-      const newListId = await historyService.finishActiveList(homeId, activeListId, totalEstimated, receiptUrls);
+      const newListId = await historyService.finishActiveList(homeId, activeListId, totalEstimated, receiptUrls, marketName);
       setActiveListId(newListId);
       setItems([]);
     } catch (error) {
@@ -437,6 +565,7 @@ export function ShoppingList() {
                       onToggle={() => handleToggle(item)}
                       onDelete={() => handleDelete(item.id)}
                       onEdit={() => openEditModal(item)}
+                      onUpdateCategory={(cat) => handleUpdateCategory(item.id, cat)}
                     />
                   </div>
                 ))}
@@ -447,11 +576,73 @@ export function ShoppingList() {
       );
     }
 
+    if (sortBy === 'resident') {
+      const groupedPending = pendingItems.reduce((acc: any, item: any) => {
+        const u = item.users;
+        const rawName = u?.full_name?.split(' ')[0] || u?.username?.replace('@', '') || 'Morador';
+        const name = rawName.charAt(0).toUpperCase() + rawName.slice(1);
+        const avatar = u?.avatar_url || null;
+        
+        if (!acc[name]) acc[name] = { items: [], avatar, name };
+        acc[name].items.push(item);
+        return acc;
+      }, {});
+
+      const sortedResidents = Object.keys(groupedPending).sort();
+
+      return (
+        <div className="mb-6 space-y-6">
+          {sortedResidents.map((residentName) => {
+            const group = groupedPending[residentName];
+            const sortedItems = group.items.sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+            
+            return (
+              <div key={residentName}>
+                <div className="flex items-center gap-2 mb-3">
+                  {group.avatar ? (
+                    <img src={group.avatar} className="w-5 h-5 rounded-full object-cover border border-gray-200" alt={group.name} />
+                  ) : (
+                    <div className="w-5 h-5 rounded-full bg-gray-200 flex items-center justify-center text-gray-500">
+                      <User size={12} />
+                    </div>
+                  )}
+                  <h2 className={`font-bold text-gray-500 uppercase tracking-wider ${isMarketMode ? 'text-base text-emerald-800' : 'text-sm'}`}>
+                    {group.name}
+                  </h2>
+                </div>
+                <div className="space-y-2">
+                  {sortedItems.map((item: any) => (
+                    <div key={item.id} className={isMarketMode ? 'py-1 text-lg' : ''}>
+                      <ShoppingItemCard
+                        name={item.name}
+                        quantity={item.quantity ? `${item.quantity} ${item.unit || ''}`.trim() : undefined}
+                        observation={item.observation}
+                        isCompleted={item.is_completed}
+                        isMarketMode={isMarketMode}
+                        creatorAvatar={item.users?.avatar_url}
+                        creatorName={item.users?.full_name || item.users?.username}
+                        onToggle={() => handleToggle(item)}
+                        onDelete={() => handleDelete(item.id)}
+                        onEdit={() => openEditModal(item)}
+                        onUpdateCategory={(cat) => handleUpdateCategory(item.id, cat)}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+
     const flatSorted = [...pendingItems].sort((a, b) => {
       if (sortBy === 'alphabetical') {
         return a.name.localeCompare(b.name);
       } else if (sortBy === 'recent') {
         return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      } else if (sortBy === 'oldest') {
+        return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
       }
       return 0;
     });
@@ -471,6 +662,7 @@ export function ShoppingList() {
               onToggle={() => handleToggle(item)}
               onDelete={() => handleDelete(item.id)}
               onEdit={() => openEditModal(item)}
+              onUpdateCategory={(cat) => handleUpdateCategory(item.id, cat)}
             />
           </div>
         ))}
@@ -479,8 +671,43 @@ export function ShoppingList() {
   };
 
   return (
-    <div className="w-full min-h-screen bg-carrin-bg relative">
+    <div className="w-full min-h-screen bg-carrin-bg relative overflow-x-hidden">
       
+      {/* Toast Comum */}
+      {toastMsg && (
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 bg-[#059669] text-white px-5 py-2.5 rounded-full flex items-center gap-4 shadow-lg z-[9999] w-max max-w-[90vw] animate-in fade-in slide-in-from-top-4 duration-300">
+          <div className="flex items-center gap-2">
+            <Check size={18} strokeWidth={2.5} />
+            <span className="font-semibold text-sm truncate">{toastMsg}</span>
+          </div>
+          <button onClick={() => setToastMsg(null)} className="opacity-80 hover:opacity-100 flex-shrink-0 flex items-center" type="button">
+            <X size={16} strokeWidth={2.5} />
+          </button>
+        </div>
+      )}
+
+      {/* Toast Desfazer Exclusão Individual */}
+      {undoDelete && (
+        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 bg-carrin-dark text-white px-5 py-3 rounded-full flex items-center gap-4 shadow-2xl z-[9999] w-max max-w-[90vw] animate-in fade-in slide-in-from-bottom-4 duration-300">
+          <span className="font-semibold text-sm">Item removido</span>
+          <div className="w-px h-4 bg-gray-600"></div>
+          <button onClick={handleUndoDelete} className="text-emerald-400 hover:text-emerald-300 font-bold text-sm flex items-center gap-1.5 transition-colors">
+            <RotateCcw size={14} /> Desfazer
+          </button>
+        </div>
+      )}
+
+      {/* Toast Desfazer Limpeza */}
+      {undoClear && (
+        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 bg-carrin-dark text-white px-5 py-3 rounded-full flex items-center gap-4 shadow-2xl z-[9999] w-max max-w-[90vw] animate-in fade-in slide-in-from-bottom-4 duration-300">
+          <span className="font-semibold text-sm">Lista limpa</span>
+          <div className="w-px h-4 bg-gray-600"></div>
+          <button onClick={handleUndoClear} className="text-emerald-400 hover:text-emerald-300 font-bold text-sm flex items-center gap-1.5 transition-colors">
+            <RotateCcw size={14} /> Desfazer
+          </button>
+        </div>
+      )}
+
       {/* ABA 1: LISTA */}
       <div className={`w-full min-h-screen bg-carrin-bg ${isMarketMode ? 'pb-24' : 'pb-32'} ${currentTab === 'list' ? 'block' : 'hidden'}`}>
         
@@ -538,7 +765,14 @@ export function ShoppingList() {
           {isMarketMode ? (
             <div className="bg-emerald-900 text-white p-4 rounded-card mb-6 flex justify-between items-center shadow-md animate-in fade-in duration-200">
               <div>
-                <p className="text-xs text-emerald-300">Falta no Carrinho</p>
+                <p className="text-xs text-emerald-300 flex items-center gap-2">
+                  Falta no Carrinho
+                  {syncStatus && (
+                    <span className={`text-[9px] px-1.5 py-0.5 rounded opacity-90 transition-colors ${syncStatus.includes('Erro') || syncStatus.includes('Sem conexão') ? 'bg-red-500/20 text-red-200' : 'bg-emerald-800 text-emerald-100'}`}>
+                      {syncStatus}
+                    </span>
+                  )}
+                </p>
                 <p className="text-2xl font-extrabold">{realPendingCount}</p>
               </div>
               <div className="text-center">
@@ -592,11 +826,38 @@ export function ShoppingList() {
                   className="appearance-none bg-white border border-gray-100 rounded-small pl-9 pr-8 py-2.5 text-sm text-carrin-dark font-semibold focus:outline-none focus:border-emerald-600 transition-colors cursor-pointer shadow-sm"
                 >
                   <option value="category">Categorias</option>
-                  <option value="recent">Recentes</option>
+                  <option value="recent">Mais recentes</option>
+                  <option value="oldest">Mais antigos</option>
                   <option value="alphabetical">Alfabética</option>
+                  <option value="resident">Morador</option>
                 </select>
                 <ListFilter size={14} className="absolute left-3 top-3.5 text-emerald-600 pointer-events-none" />
               </div>
+              
+              {!isMarketMode && (
+                <div className="relative shrink-0">
+                  <button
+                    onClick={() => setShowListMenu(!showListMenu)}
+                    className="w-[42px] h-[42px] flex items-center justify-center bg-white border border-gray-100 rounded-small text-gray-500 hover:text-carrin-dark hover:border-carrin-primary transition-colors shadow-sm"
+                  >
+                    <MoreVertical size={20} />
+                  </button>
+
+                  {showListMenu && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setShowListMenu(false)} />
+                      <div className="absolute right-0 top-[50px] mt-1 w-44 bg-white rounded-card shadow-xl border border-gray-100 z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+                        <button
+                          onClick={() => { setShowListMenu(false); setShowClearConfirm(true); }}
+                          className="w-full text-left px-4 py-3 text-sm font-bold text-red-600 hover:bg-red-50 transition-colors"
+                        >
+                          Limpar lista
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -636,6 +897,7 @@ export function ShoppingList() {
                           onToggle={() => handleToggle(item)}
                           onDelete={() => handleDelete(item.id)}
                           onEdit={() => openEditModal(item)}
+                          onUpdateCategory={(cat) => handleUpdateCategory(item.id, cat)}
                         />
                         {isMarketMode && item.price > 0 && (
                           <span className="absolute right-4 top-4 text-xs font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-small">
@@ -696,6 +958,39 @@ export function ShoppingList() {
       <div className={currentTab === 'settings' ? 'block' : 'hidden'}>
         <Settings />
       </div>
+
+      {/* MODAL DE CONFIRMAÇÃO DE LIMPEZA DE LISTA */}
+      {showClearConfirm && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-white w-full max-w-sm rounded-card p-6 shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-2 text-red-600 mb-3">
+              <AlertCircle size={28} />
+              <h3 className="text-xl font-extrabold text-carrin-dark">Limpar toda a lista?</h3>
+            </div>
+            
+            <p className="text-sm text-gray-600 mb-6">
+              Os <strong>{items.length}</strong> itens da lista atual serão removidos. Essa ação não afeta suas compras já finalizadas nem o Histórico.
+            </p>
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShowClearConfirm(false)}
+                disabled={clearingList}
+                className="w-1/2 bg-gray-100 text-gray-600 py-3.5 rounded-button font-bold text-sm hover:bg-gray-200 transition-colors disabled:opacity-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleClearList}
+                disabled={clearingList}
+                className="w-full bg-red-600 text-white py-3.5 rounded-button font-bold text-sm shadow hover:bg-red-700 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                {clearingList ? 'Limpando...' : 'Limpar lista'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* MODAL DE CONFIRMAÇÃO DE DESMARCAÇÃO */}
       {itemToUncheck && (
@@ -767,7 +1062,6 @@ export function ShoppingList() {
 
       {/* MODAL DE PREÇO ATUALIZADO (MODO MERCADO) */}
       {priceModalItem && (() => {
-        // Cálculo visual rápido enquanto o usuário digita
         const parsedUnitPrice = priceInput.trim() !== '' ? parseFloat(priceInput.replace(/\./g, '').replace(',', '.')) : 0;
         const liveTotal = parsedUnitPrice * boughtQty;
 
@@ -786,7 +1080,6 @@ export function ShoppingList() {
               
               <form onSubmit={handleSavePriceModal} className="flex flex-col gap-5">
                 
-                {/* CONTROLE DE QUANTIDADE */}
                 <div>
                   <p className="text-[10px] uppercase font-bold text-gray-400 tracking-wider mb-2">Qtd comprada</p>
                   <div className="flex items-center justify-between bg-gray-50 border border-gray-200 rounded-small p-2">
@@ -821,7 +1114,6 @@ export function ShoppingList() {
                   </div>
                 </div>
 
-                {/* VALOR UNITÁRIO */}
                 <div>
                   <p className="text-[10px] uppercase font-bold text-gray-400 tracking-wider mb-2">Valor Unitário</p>
                   <div className="relative">
@@ -838,7 +1130,6 @@ export function ShoppingList() {
                   </div>
                 </div>
 
-                {/* TOTAL CALCULADO */}
                 <div className="bg-emerald-50 border border-emerald-100 p-3 rounded-small flex justify-between items-center">
                   <span className="text-xs font-bold text-emerald-800 uppercase tracking-wider">Total do item</span>
                   <span className="text-xl font-extrabold text-emerald-600">R$ {liveTotal.toFixed(2)}</span>

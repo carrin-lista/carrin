@@ -1,23 +1,16 @@
 import { useState, useEffect } from 'react';
 import { Button } from '../../components/Button';
 import { Input } from '../../components/Input';
-import { X, Tag, Plus, Check, AlertCircle } from 'lucide-react';
+import { X, Tag, Plus, Check, AlertCircle, History } from 'lucide-react';
 import { analyzeItemInput } from '../../utils/categoryPredictor';
 import { preferenceService } from '../../services/preferenceService';
 import { useAuthStore } from '../../stores/useAuthStore';
+import { itemService } from '../../services/itemService';
 
-const CATEGORIES = [
-  '🛒 Mantimentos',
-  '🍎 Hortifrúti',
-  '🥩 Açougue',
-  '🥛 Laticínios',
-  '🧹 Limpeza',
-  '🧴 Higiene',
-  '🍺 Bebidas',
-  '🐶 Pet',
-  '👶 Bebê',
-  '🏠 Utilidades',
-  '📦 Outros'
+export const CATEGORIES = [
+  '🛒 Mantimentos', '🍎 Hortifrúti', '🥩 Açougue', '🥛 Laticínios',
+  '🧹 Limpeza', '🧴 Higiene', '🍺 Bebidas', '🐶 Pet',
+  '👶 Bebê', '🏠 Utilidades', '📦 Outros'
 ];
 
 interface ItemModalProps {
@@ -46,15 +39,14 @@ export function AddItemModal({ isOpen, onClose, onSave, initialData, existingIte
   const [duplicateItem, setDuplicateItem] = useState<any | null>(null);
   const [pendingData, setPendingData] = useState<{ isContinue: boolean } | null>(null);
 
+  // Sugestões do Histórico
+  const [suggestions, setSuggestions] = useState<any[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+
   useEffect(() => {
-    if (isOpen) {
-      document.body.style.overflow = 'hidden';
-    } else {
-      document.body.style.overflow = 'unset';
-    }
-    return () => {
-      document.body.style.overflow = 'unset';
-    };
+    if (isOpen) document.body.style.overflow = 'hidden';
+    else document.body.style.overflow = 'unset';
+    return () => { document.body.style.overflow = 'unset'; };
   }, [isOpen]);
 
   useEffect(() => {
@@ -73,11 +65,37 @@ export function AddItemModal({ isOpen, onClose, onSave, initialData, existingIte
     setToastMsg(null);
     setDuplicateItem(null);
     setPendingData(null);
+    setSuggestions([]);
+    setShowSuggestions(false);
   }, [initialData, isOpen]);
 
+  // Efeito de Debounce para Sugestões (Leve para o Banco)
   useEffect(() => {
-    if (!isOpen) setToastMsg(null);
-  }, [isOpen]);
+    if (!homeId || initialData || name.trim().length < 2) {
+      setSuggestions([]);
+      setShowSuggestions(false);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      const data = await itemService.getRecentItemSuggestions(homeId, name);
+      setSuggestions(data);
+      setShowSuggestions(data.length > 0);
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [name, homeId, initialData]);
+
+  const dismissKeyboard = () => {
+    if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+  };
+
+  const handleClose = () => {
+    dismissKeyboard();
+    onClose();
+  };
 
   if (!isOpen) return null;
 
@@ -87,18 +105,35 @@ export function AddItemModal({ isOpen, onClose, onSave, initialData, existingIte
 
     if (!initialData && value.length > 2) {
       const { category: predictedCategory, extractedQuantity, normalizedName } = analyzeItemInput(value);
-      
       let finalCategory = predictedCategory;
       if (normalizedName && homePreferences[normalizedName]) {
         finalCategory = homePreferences[normalizedName];
       }
-      
       setCategory(finalCategory);
-      
-      if (extractedQuantity && !quantityInput) {
-        setQuantityInput(extractedQuantity);
-      }
+      if (extractedQuantity && !quantityInput) setQuantityInput(extractedQuantity);
     }
+  };
+
+  const applySuggestion = (s: any) => {
+    setName(s.name);
+    
+    // Prioriza quantidade comprada, faz fallback para quantidade planejada original
+    const idealQty = s.bought_quantity || s.quantity;
+    if (idealQty) {
+      setQuantityInput(`${idealQty} ${s.unit || ''}`.trim());
+    }
+
+    const { category: predictedCategory, normalizedName } = analyzeItemInput(s.name);
+    if (normalizedName && homePreferences[normalizedName]) {
+      setCategory(homePreferences[normalizedName]);
+    } else {
+      setCategory(predictedCategory);
+    }
+
+    setShowSuggestions(false);
+    
+    // CORREÇÃO UX: Fechar teclado apenas APÓS o preenchimento bem-sucedido
+    dismissKeyboard();
   };
 
   const checkForDuplicate = (targetName: string) => {
@@ -118,7 +153,6 @@ export function AddItemModal({ isOpen, onClose, onSave, initialData, existingIte
     }
   };
 
-  // Separa o texto livre em número + unidade (Ex: "1.5 kg" -> qty: 1.5, unit: "kg")
   const parseQuantityInput = (input: string) => {
     const trimmed = input.trim();
     if (!trimmed) return { qty: null, unt: null };
@@ -134,6 +168,7 @@ export function AddItemModal({ isOpen, onClose, onSave, initialData, existingIte
 
   const handleSaveAndClose = async (e: React.FormEvent) => {
     e.preventDefault();
+    dismissKeyboard();
     if (!name.trim() || loading) return;
 
     const duplicate = checkForDuplicate(name);
@@ -153,10 +188,10 @@ export function AddItemModal({ isOpen, onClose, onSave, initialData, existingIte
     try {
       const { qty, unt } = parseQuantityInput(quantityInput);
       await onSave(name, qty, unt, observation, category);
-      onClose();
+      handleClose();
     } catch (error: any) {
       console.error("Erro ao salvar item:", error);
-      setErrorMsg(error.message || "Erro ao salvar item. Verifique o console.");
+      setErrorMsg(error.message || "Erro ao salvar item.");
     } finally {
       setLoading(false);
     }
@@ -188,18 +223,18 @@ export function AddItemModal({ isOpen, onClose, onSave, initialData, existingIte
 
     try {
       await onSave(currentName, qty, unt, currentObservation, currentCategory);
-      
       setName('');
       setQuantityInput('');
       setObservation('');
       setCategory('🛒 Mantimentos');
+      setSuggestions([]);
+      setShowSuggestions(false);
       
       setToastMsg(`${currentName} adicionado!`);
       setTimeout(() => setToastMsg(null), 3000);
-      
     } catch (error: any) {
       console.error("Erro no salvamento contínuo:", error);
-      setErrorMsg(error.message || "Erro ao salvar o item anterior.");
+      setErrorMsg(error.message || "Erro ao salvar.");
     } finally {
       setLoading(false);
     }
@@ -226,19 +261,17 @@ export function AddItemModal({ isOpen, onClose, onSave, initialData, existingIte
       )}
 
       <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
-        <div className="bg-white w-full max-w-md rounded-t-card sm:rounded-card p-6 shadow-lg animate-in fade-in slide-in-from-bottom duration-200 relative overflow-hidden">
+        <div className="bg-white w-full max-w-md max-h-[90vh] overflow-y-auto rounded-t-card sm:rounded-card p-6 shadow-lg animate-in fade-in slide-in-from-bottom duration-200 relative">
           
           {duplicateItem && (
-            <div className="absolute inset-0 bg-white z-30 flex flex-col justify-center p-6 animate-in fade-in duration-150">
+            <div className="absolute inset-0 bg-white z-30 flex flex-col justify-center p-6 animate-in fade-in duration-150 rounded-t-card sm:rounded-card">
               <div className="flex items-center gap-2 text-amber-600 mb-3">
                 <AlertCircle size={28} />
                 <h3 className="text-xl font-extrabold text-carrin-dark">Item Já Existente</h3>
               </div>
-              
               <p className="text-sm text-gray-600 mb-6">
                 ⚠️ Já existe um item com este nome na lista (<strong>{duplicateItem.name}</strong>).
               </p>
-
               <div className="flex flex-col gap-2.5">
                 <button
                   type="button"
@@ -256,11 +289,8 @@ export function AddItemModal({ isOpen, onClose, onSave, initialData, existingIte
                     const isContinue = pendingData?.isContinue;
                     setDuplicateItem(null);
                     setPendingData(null);
-                    if (isContinue) {
-                      executeSaveAndContinue();
-                    } else {
-                      executeSaveAndClose();
-                    }
+                    if (isContinue) executeSaveAndContinue();
+                    else executeSaveAndClose();
                   }}
                   className="w-full bg-gray-100 text-gray-700 py-3 rounded-button font-bold text-sm hover:bg-gray-200 transition-colors"
                 >
@@ -286,10 +316,10 @@ export function AddItemModal({ isOpen, onClose, onSave, initialData, existingIte
             </h3>
             <button 
               type="button" 
-              onClick={!loading ? onClose : undefined} 
-              className="text-gray-400 hover:text-carrin-dark"
+              onClick={!loading ? handleClose : undefined} 
+              className="text-gray-400 hover:text-carrin-dark bg-gray-50 hover:bg-gray-100 p-1 rounded-full transition-colors"
             >
-              <X size={24} />
+              <X size={20} />
             </button>
           </div>
 
@@ -299,15 +329,57 @@ export function AddItemModal({ isOpen, onClose, onSave, initialData, existingIte
             </div>
           )}
 
-          <form id="add-item-form" onSubmit={handleSaveAndClose} className="flex flex-col gap-3">
-            <Input
-              label="O que falta comprar?"
-              placeholder="Ex: Detergente, Leite, Tomate..."
-              value={name}
-              onChange={handleNameChange}
-              required
-              autoFocus
-            />
+          <form id="add-item-form" onSubmit={handleSaveAndClose} className="flex flex-col gap-3 pb-safe">
+            <div className="flex flex-col gap-1 relative">
+              <Input
+                label="O que falta comprar?"
+                placeholder="Ex: Detergente, Leite, Tomate..."
+                value={name}
+                onChange={handleNameChange}
+                required
+                autoFocus
+              />
+              
+              {/* Dropdown de Sugestões Integrado ao Fluxo (sem absolute, max 3) */}
+              {showSuggestions && suggestions.length > 0 && (
+                <div className="flex flex-col mt-1 bg-gray-50 border border-gray-200 rounded-small overflow-hidden transition-all animate-in fade-in duration-200">
+                  {suggestions.slice(0, 3).map((s, idx) => {
+                    const idealQty = s.bought_quantity || s.quantity;
+                    return (
+                      <button
+                        key={idx}
+                        type="button"
+                        /* CORREÇÃO UX: onPointerDown + preventDefault evita que o blur do input aconteça antes do clique registrar, garantindo seleção em 1 toque */
+                        onPointerDown={(e) => {
+                          e.preventDefault();
+                          applySuggestion(s);
+                        }}
+                        className="flex flex-col items-start px-3 py-1.5 hover:bg-emerald-50 focus:bg-emerald-50 border-b border-gray-100 last:border-0 transition-colors w-full text-left outline-none"
+                      >
+                        <div className="flex justify-between items-center w-full">
+                          <div className="flex items-center gap-1.5 overflow-hidden">
+                            <History size={12} className="text-gray-400 shrink-0" />
+                            <span className="text-sm font-bold text-carrin-dark truncate">{s.name}</span>
+                          </div>
+                          {idealQty && (
+                            <span className="text-[10px] font-bold text-gray-500 shrink-0 ml-2">
+                              {idealQty} {s.unit}
+                            </span>
+                          )}
+                        </div>
+                        {s.unit_price > 0 && (
+                          <div className="ml-5 mt-0.5">
+                            <span className="text-[9px] font-medium text-gray-500">
+                              Última vez: R$ {Number(s.unit_price).toFixed(2)} cada
+                            </span>
+                          </div>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
 
             <div className="flex flex-col gap-1">
               <label className="text-xs font-semibold text-carrin-dark flex items-center gap-1">

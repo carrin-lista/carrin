@@ -87,6 +87,15 @@ export const itemService = {
     if (error) throw error;
   },
 
+  async clearActiveList(shoppingListId: string) {
+    const { error } = await supabase
+      .from('shopping_items')
+      .delete()
+      .eq('shopping_list_id', shoppingListId);
+
+    if (error) throw error;
+  },
+
   async updateItem(itemId: string, updates: { name?: string; quantity?: number | null; unit?: string | null; observation?: string; category_id?: string }) {
     const { error } = await supabase
       .from('shopping_items')
@@ -94,5 +103,37 @@ export const itemService = {
       .eq('id', itemId);
 
     if (error) throw error;
+  },
+
+  // NOVA FUNÇÃO: Busca sugestões do próprio histórico da casa
+  async getRecentItemSuggestions(homeId: string, query: string) {
+    if (!query || query.trim().length < 2) return [];
+    
+    const { data, error } = await supabase
+      .from('shopping_items')
+      .select('name, quantity, unit, price, unit_price, bought_quantity')
+      .eq('home_id', homeId)
+      .eq('is_completed', true)
+      .ilike('name', `%${query.trim()}%`)
+      .order('updated_at', { ascending: false })
+      .limit(20); // Busca um bloco seguro para deduplicar
+
+    if (error) {
+      console.error("Erro ao buscar sugestões:", error);
+      return [];
+    }
+
+    const uniqueItems: any[] = [];
+    const seen = new Set();
+    
+    for (const item of data || []) {
+      const normalized = item.name.trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+      if (!seen.has(normalized)) {
+        seen.add(normalized);
+        uniqueItems.push(item);
+      }
+    }
+    
+    return uniqueItems.slice(0, 4); // Retorna no máximo 4 opções diretas
   }
 };

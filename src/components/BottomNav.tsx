@@ -1,4 +1,5 @@
 import { ShoppingCart, History, Home, Settings as SettingsIcon } from 'lucide-react';
+import { useTutorialStore } from '../stores/useTutorialStore';
 
 interface BottomNavProps {
   currentTab: string;
@@ -6,10 +7,13 @@ interface BottomNavProps {
 }
 
 export function BottomNav({ currentTab, onTabChange }: BottomNavProps) {
+  const { registerElement } = useTutorialStore();
+
   return (
     <nav className="fixed bottom-0 w-full bg-white border-t border-gray-100 pb-safe z-40">
       <div className="flex justify-around items-center h-16 max-w-md mx-auto">
         <button 
+          ref={(el) => registerElement('nav-list', el)}
           onClick={() => onTabChange('list')}
           className={`flex flex-col items-center justify-center w-full h-full transition-colors ${currentTab === 'list' ? 'text-carrin-primary' : 'text-gray-400 hover:text-carrin-dark'}`}
         >

@@ -4,6 +4,8 @@ export type UserPreferences = {
   notify_home_updates: boolean;
   notify_reminders: boolean;
   notify_suggestions: boolean;
+  tutorial_version?: number;
+  tutorial_state?: Record<string, string>;
 };
 
 export const preferenceService = {
@@ -12,12 +14,33 @@ export const preferenceService = {
       .from('user_preferences')
       .select('*')
       .eq('user_id', userId)
-      .single();
+      .maybeSingle();
 
-    if (error && error.code !== 'PGRST116') {
+    if (error) {
       console.error("Erro ao buscar preferências:", error);
       return null;
     }
+
+    // Se o usuário ainda não tem preferência no banco, nós criamos agora com a versão 1 do tutorial!
+    if (!data) {
+      const defaultPrefs = {
+        user_id: userId,
+        tutorial_version: 1,
+        tutorial_state: { list: 'pending', history: 'pending', home: 'pending', settings: 'pending' },
+        updated_at: new Date().toISOString()
+      };
+      
+      const { data: newData, error: insertError } = await supabase
+        .from('user_preferences')
+        .insert(defaultPrefs)
+        .select()
+        .single();
+        
+      if (!insertError && newData) {
+        return newData;
+      }
+    }
+
     return data;
   },
 
@@ -36,8 +59,6 @@ export const preferenceService = {
     }
   },
 
-  // --- NOVAS FUNÇÕES PARA O APRENDIZADO DA CASA ---
-  
   async getHomeCategoryPreferences(homeId: string): Promise<Record<string, string>> {
     const { data, error } = await supabase
       .from('home_category_preferences')
@@ -72,5 +93,19 @@ export const preferenceService = {
     if (error) {
       console.error("Erro ao salvar preferência da casa:", error);
     }
+  },
+
+  async markTutorialAsDone(userId: string, screen: string) {
+    const prefs = await this.getPreferences(userId);
+    if (!prefs || !prefs.tutorial_state) return;
+    
+    const newState = { ...prefs.tutorial_state, [screen]: 'done' };
+    
+    const { error } = await supabase
+      .from('user_preferences')
+      .update({ tutorial_state: newState })
+      .eq('user_id', userId);
+
+    if (error) console.error("Erro ao salvar progresso do tutorial:", error);
   }
 };

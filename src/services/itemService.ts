@@ -2,7 +2,8 @@ import { supabase } from './supabase';
 
 export interface NewItemDTO {
   name: string;
-  quantity?: string;
+  quantity?: number | null;
+  unit?: string | null;
   category_id?: string;
   observation?: string;
   home_id: string;
@@ -33,7 +34,6 @@ export const itemService = {
   async getItems(homeId: string) {
     const listId = await this.getActiveListId(homeId);
 
-    // ADICIONADO: Faz o join com a tabela de usuários para trazer o avatar e o nome
     const { data, error } = await supabase
       .from('shopping_items')
       .select('*, users:created_by(id, full_name, username, avatar_url)')
@@ -47,7 +47,6 @@ export const itemService = {
   async addItem(item: Omit<NewItemDTO, 'shopping_list_id'>) {
     const shoppingListId = await this.getActiveListId(item.home_id);
 
-    // ADICIONADO: Traz o join do usuário também no retorno do item recém-criado
     const { data, error } = await supabase
       .from('shopping_items')
       .insert([{
@@ -61,15 +60,15 @@ export const itemService = {
     return data;
   },
 
-  async toggleItemCompletion(itemId: string, isCompleted: boolean, price?: number) {
+  async toggleItemCompletion(itemId: string, isCompleted: boolean, price?: number, unitPrice?: number, boughtQuantity?: number) {
     const updateData: any = { 
       is_completed: isCompleted, 
       updated_at: new Date().toISOString() 
     };
     
-    if (price !== undefined) {
-      updateData.price = price;
-    }
+    if (price !== undefined) updateData.price = price;
+    if (unitPrice !== undefined) updateData.unit_price = unitPrice;
+    if (boughtQuantity !== undefined) updateData.bought_quantity = boughtQuantity;
 
     const { error } = await supabase
       .from('shopping_items')
@@ -88,7 +87,7 @@ export const itemService = {
     if (error) throw error;
   },
 
-  async updateItem(itemId: string, updates: { name?: string; quantity?: string; observation?: string; category_id?: string }) {
+  async updateItem(itemId: string, updates: { name?: string; quantity?: number | null; unit?: string | null; observation?: string; category_id?: string }) {
     const { error } = await supabase
       .from('shopping_items')
       .update({ ...updates, updated_at: new Date().toISOString() })

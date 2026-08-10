@@ -6,6 +6,7 @@ import {
   Clock, Edit3, Save, User, Search, Send, Calendar, Trash2, 
   Settings, Share2, AlertCircle, X, Camera 
 } from 'lucide-react';
+import { useTutorialStore } from '../../stores/useTutorialStore';
 
 function SwipeableInviteItem({ invite, onCancel }: { invite: any, onCancel: () => void }) {
   const [offsetX, setOffsetX] = useState(0);
@@ -101,6 +102,8 @@ function SwipeableInviteItem({ invite, onCancel }: { invite: any, onCancel: () =
 
 export function Home() {
   const { user, homeId } = useAuthStore();
+  const { registerElement } = useTutorialStore();
+
   const [homeData, setHomeData] = useState<any>(null);
   const [members, setMembers] = useState<any[]>([]);
   const [pendingInvites, setPendingInvites] = useState<any[]>([]);
@@ -113,7 +116,6 @@ export function Home() {
   const [newName, setNewName] = useState('');
   const [savingName, setSavingName] = useState(false);
 
-  // Estados para foto da casa
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [showPhotoMenu, setShowPhotoMenu] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -130,7 +132,6 @@ export function Home() {
 
   const [memberToRemove, setMemberToRemove] = useState<{ id: string; name: string } | null>(null);
 
-  // NOVOS ESTADOS PARA TRANSFERÊNCIA DE TITULARIDADE
   const [isTransferModalOpen, setIsTransferModalOpen] = useState(false);
   const [selectedNewOwner, setSelectedNewOwner] = useState<any>(null);
   const [transferring, setTransferring] = useState(false);
@@ -414,7 +415,6 @@ export function Home() {
 
       <div className="bg-white rounded-card p-5 shadow-sm border border-gray-100 space-y-4">
         
-        {/* Bloco de Interação da Foto embutido no modal original */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4 relative">
             
@@ -515,7 +515,7 @@ export function Home() {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-3 pt-3 border-t border-gray-50 text-xs">
+        <div ref={(el) => registerElement('home-info-area', el)} className="grid grid-cols-2 gap-3 pt-3 border-t border-gray-50 text-xs">
           <div className="bg-gray-50 p-3 rounded-small">
             <p className="text-gray-400 uppercase font-bold tracking-wider text-[10px]">Moradores</p>
             <p className="text-sm font-extrabold text-carrin-dark mt-0.5">{members.length} {members.length === 1 ? 'pessoa' : 'pessoas'}</p>
@@ -532,18 +532,21 @@ export function Home() {
       {canManageHome && (
         <div className="flex bg-white p-1 rounded-small border border-gray-100 shadow-sm">
           <button 
+            ref={(el) => registerElement('tab-moradores', el)}
             onClick={() => setActiveSubTab('overview')} 
             className={`flex-1 py-2 text-xs font-bold rounded transition-colors ${activeSubTab === 'overview' ? 'bg-emerald-50 text-emerald-700 shadow-sm' : 'text-gray-500 hover:text-carrin-dark'}`}
           >
             Moradores ({members.length})
           </button>
           <button 
+            ref={(el) => registerElement('tab-convites', el)}
             onClick={() => setActiveSubTab('invites')} 
             className={`flex-1 py-2 text-xs font-bold rounded transition-colors relative ${activeSubTab === 'invites' ? 'bg-emerald-50 text-emerald-700 shadow-sm' : 'text-gray-500 hover:text-carrin-dark'}`}
           >
             Convites {pendingInvites.length > 0 && <span className="ml-1 bg-emerald-600 text-white px-1.5 py-0.2 rounded-full text-[9px]">{pendingInvites.length}</span>}
           </button>
           <button 
+            ref={(el) => registerElement('tab-configuracoes', el)}
             onClick={() => setActiveSubTab('settings')} 
             className={`flex-1 py-2 text-xs font-bold rounded transition-colors ${activeSubTab === 'settings' ? 'bg-emerald-50 text-emerald-700 shadow-sm' : 'text-gray-500 hover:text-carrin-dark'}`}
           >
@@ -585,7 +588,7 @@ export function Home() {
 
             <div className="space-y-3">
               {members.map((member) => (
-                <div key={member.id} className="flex items-center justify-between p-3.5 bg-gray-50 rounded-small border border-gray-100">
+                <div key={member.users?.id || member.id} className="flex items-center justify-between p-3.5 bg-gray-50 rounded-small border border-gray-100">
                   <div className="flex items-center gap-3">
                     <div className="w-11 h-11 rounded-full bg-gray-200 overflow-hidden shrink-0 flex items-center justify-center text-gray-500 border border-gray-200 shadow-sm">
                       {member.users?.avatar_url ? (
@@ -854,7 +857,6 @@ export function Home() {
         </div>
       )}
 
-      {/* MODAL DE TRANSFERÊNCIA DE TITULARIDADE */}
       {isTransferModalOpen && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
           <div className="bg-white w-full max-w-sm rounded-card p-6 shadow-2xl space-y-4 animate-in zoom-in-95 duration-200 max-h-[90vh] flex flex-col">
@@ -872,7 +874,7 @@ export function Home() {
             <div className="overflow-y-auto space-y-2 flex-1 min-h-[100px]">
               {members.filter(m => m.users.id !== user?.id).map((member) => (
                 <div 
-                  key={member.id} 
+                  key={member.users?.id || member.id} 
                   onClick={() => setSelectedNewOwner(member)}
                   className={`flex items-center gap-3 p-3 rounded-small border cursor-pointer transition-all ${
                     selectedNewOwner?.id === member.id 

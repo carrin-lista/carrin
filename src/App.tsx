@@ -7,6 +7,7 @@ import { NoHomeView } from './features/home/NoHomeView';
 import { ShoppingList } from './features/shopping-list/ShoppingList';
 import { InviteView } from './features/invite/InviteView';
 import { Splash } from './components/Splash';
+import { TutorialSpotlight } from './components/TutorialSpotlight';
 
 function App() {
   const { user, setUser, homeId, setHomeId } = useAuthStore();
@@ -122,6 +123,7 @@ function App() {
   return (
     <div className={`w-full min-h-screen bg-carrin-bg transition-opacity duration-500 ease-in-out ${fadeIn ? 'opacity-100' : 'opacity-0'}`}>
       {renderContent()}
+      <TutorialSpotlight />
     </div>
   );
 }

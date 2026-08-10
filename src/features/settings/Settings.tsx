@@ -5,11 +5,13 @@ import { userService } from '../../services/userService';
 import { supabase } from '../../services/supabase';
 import { LogOut, User, Bell, Edit3, Save, X, Check, AlertCircle, Camera, Trash2 } from 'lucide-react';
 import { notificationService } from '../../services/notificationService';
+import { useTutorialStore } from '../../stores/useTutorialStore';
 
 export function Settings() {
   const { user } = useAuthStore();
-  const [loading, setLoading] = useState(true);
+  const { registerElement } = useTutorialStore();
   
+  const [loading, setLoading] = useState(true);
   const [userProfile, setUserProfile] = useState<any>(null);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [showAvatarMenu, setShowAvatarMenu] = useState(false);
@@ -58,7 +60,6 @@ export function Settings() {
     loadData();
   }, [user]);
 
-  // Máscara e trava para o formato de telefone brasileiro: (99) 99999-9999
   const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     let value = e.target.value.replace(/\D/g, '');
     if (value.length > 11) value = value.slice(0, 11);
@@ -179,7 +180,7 @@ export function Settings() {
         <p className="text-gray-500 text-sm">Gerencie o seu perfil e preferências de notificação.</p>
       </div>
 
-      <div className="bg-white rounded-card p-5 shadow-sm space-y-4 border border-gray-100">
+      <div ref={(el) => registerElement('settings-profile-area', el)} className="bg-white rounded-card p-5 shadow-sm space-y-4 border border-gray-100">
         <div className="flex items-center justify-between pb-2 border-b border-gray-50">
           <div className="flex items-center gap-2 text-carrin-dark font-semibold">
             <User size={20} className="text-carrin-primary" />
@@ -367,7 +368,7 @@ export function Settings() {
         )}
       </div>
 
-      <div className="bg-white rounded-card p-5 shadow-sm space-y-4 border border-gray-100">
+      <div ref={(el) => registerElement('settings-home-area', el)} className="bg-white rounded-card p-5 shadow-sm space-y-4 border border-gray-100">
         <div className="flex items-center gap-2 text-carrin-dark font-semibold pb-2 border-b border-gray-50">
           <Bell size={20} className="text-carrin-primary" />
           <span>Notificações</span>
@@ -416,16 +417,16 @@ export function Settings() {
 
         <div className="mt-6 pt-4 border-t border-gray-100">
           <button
-  onClick={async () => {
-    if (!user) return;
-    await notificationService.subscribeToPushNotifications(user.id);
-    showFeedback('success', 'Aparelho conectado! Você receberá alertas.');
-  }}
-  className="w-full bg-gray-50 border border-gray-200 text-carrin-dark py-3 rounded-small font-semibold text-sm hover:bg-gray-100 transition-colors flex justify-center items-center gap-2"
->
-  <Bell size={16} className="text-emerald-600" />
-  Ativar Alertas Neste Aparelho
-</button>
+            onClick={async () => {
+              if (!user) return;
+              await notificationService.subscribeToPushNotifications(user.id);
+              showFeedback('success', 'Aparelho conectado! Você receberá alertas.');
+            }}
+            className="w-full bg-gray-50 border border-gray-200 text-carrin-dark py-3 rounded-small font-semibold text-sm hover:bg-gray-100 transition-colors flex justify-center items-center gap-2"
+          >
+            <Bell size={16} className="text-emerald-600" />
+            Ativar Alertas Neste Aparelho
+          </button>
           <p className="text-center text-[10px] text-gray-400 mt-2">
             Você precisa ativar isso em cada celular que quiser receber avisos.
           </p>

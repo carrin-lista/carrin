@@ -23,8 +23,8 @@ const CATEGORIES = [
 interface ItemModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (name: string, quantity: string, observation: string, category_id: string) => Promise<void>;
-  initialData?: { name: string; quantity?: string; observation?: string; category_id?: string } | null;
+  onSave: (name: string, quantity: number | null, unit: string | null, observation: string, category_id: string) => Promise<void>;
+  initialData?: { name: string; quantity?: number | null; unit?: string | null; observation?: string; category_id?: string } | null;
   existingItems?: any[];
   homePreferences: Record<string, string>;
   onGoToExisting?: (item: any) => void;
@@ -36,7 +36,7 @@ export function AddItemModal({ isOpen, onClose, onSave, initialData, existingIte
   const { user, homeId } = useAuthStore();
   
   const [name, setName] = useState('');
-  const [quantity, setQuantity] = useState('');
+  const [quantityInput, setQuantityInput] = useState('');
   const [observation, setObservation] = useState('');
   const [category, setCategory] = useState('🛒 Mantimentos');
   const [loading, setLoading] = useState(false);
@@ -60,12 +60,12 @@ export function AddItemModal({ isOpen, onClose, onSave, initialData, existingIte
   useEffect(() => {
     if (initialData) {
       setName(initialData.name || '');
-      setQuantity(initialData.quantity || '');
+      setQuantityInput(initialData.quantity ? `${initialData.quantity} ${initialData.unit || ''}`.trim() : '');
       setObservation(initialData.observation || '');
       setCategory(initialData.category_id || '🛒 Mantimentos');
     } else {
       setName('');
-      setQuantity('');
+      setQuantityInput('');
       setObservation('');
       setCategory('🛒 Mantimentos');
     }
@@ -95,8 +95,8 @@ export function AddItemModal({ isOpen, onClose, onSave, initialData, existingIte
       
       setCategory(finalCategory);
       
-      if (extractedQuantity && !quantity) {
-        setQuantity(extractedQuantity);
+      if (extractedQuantity && !quantityInput) {
+        setQuantityInput(extractedQuantity);
       }
     }
   };
@@ -110,15 +110,26 @@ export function AddItemModal({ isOpen, onClose, onSave, initialData, existingIte
 
   const checkAndLearnCategory = () => {
     if (!homeId || !user) return;
-    
     const { category: predictedCategory, normalizedName } = analyzeItemInput(name);
     if (!normalizedName) return;
-
     const expectedCategory = homePreferences[normalizedName] || predictedCategory;
-
     if (category !== expectedCategory) {
       preferenceService.saveHomeCategoryPreference(homeId, normalizedName, category, user.id).catch(console.error);
     }
+  };
+
+  // Separa o texto livre em número + unidade (Ex: "1.5 kg" -> qty: 1.5, unit: "kg")
+  const parseQuantityInput = (input: string) => {
+    const trimmed = input.trim();
+    if (!trimmed) return { qty: null, unt: null };
+
+    const match = trimmed.match(/^([\d.,]+)\s*(.*)$/);
+    if (match) {
+      const qty = parseFloat(match[1].replace(',', '.'));
+      const unt = match[2].trim() || null;
+      return { qty: isNaN(qty) ? null : qty, unt };
+    }
+    return { qty: null, unt: trimmed };
   };
 
   const handleSaveAndClose = async (e: React.FormEvent) => {
@@ -140,7 +151,8 @@ export function AddItemModal({ isOpen, onClose, onSave, initialData, existingIte
     setLoading(true);
     setErrorMsg(null);
     try {
-      await onSave(name, quantity, observation, category);
+      const { qty, unt } = parseQuantityInput(quantityInput);
+      await onSave(name, qty, unt, observation, category);
       onClose();
     } catch (error: any) {
       console.error("Erro ao salvar item:", error);
@@ -150,9 +162,9 @@ export function AddItemModal({ isOpen, onClose, onSave, initialData, existingIte
     }
   };
 
-  const handleSaveAndContinue = (e: React.MouseEvent) => {
+  const handleSaveAndContinue = async (e: React.MouseEvent) => {
     e.preventDefault();
-    if (!name.trim()) return;
+    if (!name.trim() || loading) return;
 
     const duplicate = checkForDuplicate(name);
     if (duplicate) {
@@ -162,27 +174,35 @@ export function AddItemModal({ isOpen, onClose, onSave, initialData, existingIte
     }
 
     checkAndLearnCategory();
-    executeSaveAndContinue();
+    await executeSaveAndContinue();
   };
 
-  const executeSaveAndContinue = () => {
+  const executeSaveAndContinue = async () => {
     const currentName = name;
-    const currentQuantity = quantity;
+    const { qty, unt } = parseQuantityInput(quantityInput);
     const currentObservation = observation;
     const currentCategory = category;
 
-    setName('');
-    setQuantity('');
-    setObservation('');
-    setCategory('🛒 Mantimentos');
-    
-    setToastMsg(`${currentName} adicionado!`);
-    setTimeout(() => setToastMsg(null), 3000);
+    setLoading(true);
+    setErrorMsg(null);
 
-    onSave(currentName, currentQuantity, currentObservation, currentCategory).catch((error: any) => {
+    try {
+      await onSave(currentName, qty, unt, currentObservation, currentCategory);
+      
+      setName('');
+      setQuantityInput('');
+      setObservation('');
+      setCategory('🛒 Mantimentos');
+      
+      setToastMsg(`${currentName} adicionado!`);
+      setTimeout(() => setToastMsg(null), 3000);
+      
+    } catch (error: any) {
       console.error("Erro no salvamento contínuo:", error);
       setErrorMsg(error.message || "Erro ao salvar o item anterior.");
-    });
+    } finally {
+      setLoading(false);
+    }
   };
 
   const isEditing = !!initialData;
@@ -312,8 +332,8 @@ export function AddItemModal({ isOpen, onClose, onSave, initialData, existingIte
                 <Input
                   label="Quantidade (opcional)"
                   placeholder="Ex: 2L, 1kg"
-                  value={quantity}
-                  onChange={(e) => setQuantity(e.target.value)}
+                  value={quantityInput}
+                  onChange={(e) => setQuantityInput(e.target.value)}
                   disabled={loading}
                 />
               </div>
@@ -342,10 +362,15 @@ export function AddItemModal({ isOpen, onClose, onSave, initialData, existingIte
                   <button
                     type="button"
                     onClick={handleSaveAndContinue}
-                    className="w-14 h-14 shrink-0 bg-carrin-primary text-white rounded-full shadow-xl flex items-center justify-center hover:bg-emerald-600 hover:scale-105 active:scale-95 transition-all"
+                    disabled={loading}
+                    className="w-14 h-14 shrink-0 bg-carrin-primary text-white rounded-full shadow-xl flex items-center justify-center hover:bg-emerald-600 hover:scale-105 active:scale-95 transition-all disabled:opacity-50 disabled:hover:scale-100"
                     title="Adicionar próximo item"
                   >
-                    <Plus size={28} strokeWidth={2.5} />
+                    {loading ? (
+                      <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
+                    ) : (
+                      <Plus size={28} strokeWidth={2.5} />
+                    )}
                   </button>
                 </>
               ) : (

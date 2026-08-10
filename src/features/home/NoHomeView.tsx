@@ -143,6 +143,10 @@ export function NoHomeView({ onHomeCreated }: { onHomeCreated: (id: string) => v
     if (!incomingInvite || !user) return;
     try {
       await homeService.acceptInvite(incomingInvite.id, incomingInvite.home_id, user.id);
+      
+      // GARANTIA: Força a rota inicial para 'list' logo após aceitar o convite
+      localStorage.setItem('carrin_current_tab', 'list');
+      
       setHomeId(incomingInvite.home_id);
       onHomeCreated(incomingInvite.home_id);
     } catch (error) {
@@ -158,7 +162,6 @@ export function NoHomeView({ onHomeCreated }: { onHomeCreated: (id: string) => v
     const createdBy = incomingInvite.created_by;
     const homeName = incomingInvite.resolvedHomeName;
     
-    // Fecha o modal na hora
     setIncomingInvite(null);
 
     try {
@@ -175,7 +178,6 @@ export function NoHomeView({ onHomeCreated }: { onHomeCreated: (id: string) => v
         }
       }
 
-      // Apaga o convite do banco
       await supabase
         .from('home_invites')
         .delete()
@@ -194,7 +196,11 @@ export function NoHomeView({ onHomeCreated }: { onHomeCreated: (id: string) => v
          >
            ← Voltar
          </button>
-         <CreateHome onHomeCreated={onHomeCreated} />
+         <CreateHome onHomeCreated={(id) => {
+           // GARANTIA: Força a rota inicial para 'list' logo após criar a casa
+           localStorage.setItem('carrin_current_tab', 'list');
+           onHomeCreated(id);
+         }} />
        </div>
      );
   }

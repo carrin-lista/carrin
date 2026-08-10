@@ -10,11 +10,12 @@ import { Home } from '../home/Home';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { itemService } from '../../services/itemService';
 import { historyService } from '../../services/historyService';
-import { CheckCheck, ShoppingCart, X, AlertCircle, Play, Search, ListFilter, Plus } from 'lucide-react';
+import { CheckCheck, ShoppingCart, X, AlertCircle, Play, Search, ListFilter, Plus, Minus } from 'lucide-react';
 import { NotificationBell } from '../notifications/NotificationBell';
 import { PushPermissionModal } from './PushPermissionModal'; 
 import { notificationService } from '../../services/notificationService';
 import { preferenceService } from '../../services/preferenceService';
+import { useTutorialStore } from '../../stores/useTutorialStore';
 
 const EMPTY_MESSAGES = [
   "Quando algo acabar em casa, coloque aqui.",
@@ -27,6 +28,8 @@ const EMPTY_MESSAGES = [
 
 export function ShoppingList() {
   const { user, homeId } = useAuthStore();
+  const { registerElement, startTutorial, activeTutorial } = useTutorialStore();
+
   const [currentTab, setCurrentTab] = useState(() => {
     return localStorage.getItem('carrin_current_tab') || 'list';
   });
@@ -48,8 +51,10 @@ export function ShoppingList() {
   const [showFabTooltip, setShowFabTooltip] = useState(false);
   const [showTutorial, setShowTutorial] = useState(false);
   
+  // MODAL DE COMPRA (MERCADO)
   const [priceModalItem, setPriceModalItem] = useState<any | null>(null);
   const [priceInput, setPriceInput] = useState('');
+  const [boughtQty, setBoughtQty] = useState<number>(1);
 
   const [showPushPrompt, setShowPushPrompt] = useState(false);
   const [itemToUncheck, setItemToUncheck] = useState<any | null>(null);
@@ -60,8 +65,9 @@ export function ShoppingList() {
   const [loading, setLoading] = useState(true);
   const [finishing, setFinishing] = useState(false);
   const [homePreferences, setHomePreferences] = useState<Record<string, string>>({});
+  
+  const [userPrefs, setUserPrefs] = useState<any>(null);
 
-  // Trava o scroll do fundo se QUALQUER modal da lista estiver aberto
   const isAnyModalOpen = !!(priceModalItem || itemToUncheck || showTutorial || isFinishModalOpen || isModalOpen || showPushPrompt);
 
   useEffect(() => {
@@ -74,6 +80,43 @@ export function ShoppingList() {
       document.body.style.overflow = 'unset';
     };
   }, [isAnyModalOpen]);
+
+  useEffect(() => {
+    async function loadPrefs() {
+      if (!user?.id) return;
+      const prefs = await preferenceService.getPreferences(user.id);
+      setUserPrefs(prefs);
+    }
+    loadPrefs();
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!userPrefs || userPrefs.tutorial_version !== 1) return;
+    if (activeTutorial) return;
+
+    const state = userPrefs.tutorial_state || {};
+    const tabToTutorialKey: Record<string, string> = {
+      list: 'list',
+      history: 'history',
+      home: 'home',
+      settings: 'settings'
+    };
+
+    const currentKey = tabToTutorialKey[currentTab];
+    
+    if (currentKey && state[currentKey] === 'pending') {
+      setUserPrefs((prev: any) => ({
+        ...prev,
+        tutorial_state: {
+          ...prev.tutorial_state,
+          [currentKey]: 'started'
+        }
+      }));
+      setTimeout(() => {
+        startTutorial(currentKey as any);
+      }, 500);
+    }
+  }, [currentTab, userPrefs, activeTutorial, startTutorial]);
 
   const fetchItems = async () => {
     if (!homeId) return;
@@ -97,7 +140,6 @@ export function ShoppingList() {
         setActiveListId(listId);
         await fetchItems();
 
-        // NOVO: Carrega as preferências da casa
         const prefs = await preferenceService.getHomeCategoryPreferences(homeId);
         setHomePreferences(prefs);
 
@@ -107,21 +149,14 @@ export function ShoppingList() {
         setLoading(false);
       }
     }
-    
     loadData();
 
     if (!homeId) return;
-
     const channel = supabase
       .channel(`home_items_${homeId}`)
       .on(
         'postgres_changes',
-        {
-          event: '*', 
-          schema: 'public',
-          table: 'shopping_items',
-          filter: `home_id=eq.${homeId}`, 
-        },
+        { event: '*', schema: 'public', table: 'shopping_items', filter: `home_id=eq.${homeId}` },
         (payload) => {
           if (payload.eventType === 'INSERT') {
             setItems(current => current.some(i => i.id === payload.new.id) ? current : [payload.new, ...current]);
@@ -131,12 +166,9 @@ export function ShoppingList() {
             setItems(current => current.filter(i => i.id !== payload.old.id));
           }
         }
-      )
-      .subscribe();
+      ).subscribe();
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    return () => { supabase.removeChannel(channel); };
   }, [homeId]);
 
   useEffect(() => {
@@ -144,7 +176,6 @@ export function ShoppingList() {
     if (isMarketMode) {
       localStorage.setItem('carrin_market_session_active', 'true');
       setHasActiveMarketSession(true);
-      
       setShowFabTooltip(true);
       const timer = setTimeout(() => setShowFabTooltip(false), 5000);
       return () => clearTimeout(timer);
@@ -163,8 +194,6 @@ export function ShoppingList() {
     if ('Notification' in window) {
       const permission = Notification.permission;
       const hasSeenPrompt = localStorage.getItem('carrin_push_prompt_seen');
-      
-      // Só mostra se o usuário ainda não decidiu E se não mostramos o nosso modal antes
       if (permission === 'default' && !hasSeenPrompt) {
         const timer = setTimeout(() => setShowPushPrompt(true), 3000);
         return () => clearTimeout(timer);
@@ -172,21 +201,16 @@ export function ShoppingList() {
     }
   }, []);
 
-  // --- FUNÇÕES DE CONTROLE DO MODAL DE PUSH (ETAPA D) ---
   const handleEnablePush = async () => {
     localStorage.setItem('carrin_push_prompt_seen', 'true');
     setShowPushPrompt(false);
-    
-    if (user) {
-      await notificationService.subscribeToPushNotifications(user.id);
-    }
+    if (user) await notificationService.subscribeToPushNotifications(user.id);
   };
 
   const handleDeclinePush = () => {
     localStorage.setItem('carrin_push_prompt_seen', 'true');
     setShowPushPrompt(false);
   };
-  // -----------------------------------------------------
 
   const handleToggleMarketMode = () => {
     if (!isMarketMode) {
@@ -219,9 +243,11 @@ export function ShoppingList() {
 
     if (isMarketMode && nextStatus) {
       setPriceModalItem(item);
-      // Se o item já tiver preço salvo, trazemos formatado para o teclado
-      if (item.price) {
-        setPriceInput(Number(item.price).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+      setBoughtQty(item.quantity ? Number(item.quantity) : 1);
+      
+      // O input de preço no modo mercado é o Unit Price
+      if (item.unit_price) {
+        setPriceInput(Number(item.unit_price).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
       } else {
         setPriceInput('');
       }
@@ -233,56 +259,54 @@ export function ShoppingList() {
       return;
     }
 
-    executeToggle(item.id, nextStatus, nextStatus ? item.price : 0);
+    executeToggle(item.id, nextStatus, nextStatus ? item.price : 0, nextStatus ? item.unit_price : null, nextStatus ? item.bought_quantity : null);
   };
 
   const handleConfirmUncheck = () => {
     if (!itemToUncheck) return;
-    executeToggle(itemToUncheck.id, false, 0);
+    executeToggle(itemToUncheck.id, false, 0, null, null);
     setItemToUncheck(null);
   };
 
-  const executeToggle = async (itemId: string, isCompleted: boolean, price?: number) => {
+  const executeToggle = async (itemId: string, isCompleted: boolean, price?: number | null, unitPrice?: number | null, boughtQuantity?: number | null) => {
     setItems(items.map(i => 
-      i.id === itemId ? { ...i, is_completed: isCompleted, price: price !== undefined ? price : i.price } : i
+      i.id === itemId ? { 
+        ...i, 
+        is_completed: isCompleted, 
+        price: price !== undefined ? price : i.price,
+        unit_price: unitPrice !== undefined ? unitPrice : i.unit_price,
+        bought_quantity: boughtQuantity !== undefined ? boughtQuantity : i.bought_quantity
+      } : i
     ));
 
     try {
-      await itemService.toggleItemCompletion(itemId, isCompleted, price);
+      await itemService.toggleItemCompletion(itemId, isCompleted, price || 0, unitPrice || 0, boughtQuantity || 0);
     } catch (error) {
       console.error("Erro ao atualizar item:", error);
     }
   };
 
-  // NOVA FUNÇÃO: Máscara automática de dinheiro (R$)
   const handlePriceChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value.replace(/\D/g, ''); // Pega só os números
-    
+    const value = e.target.value.replace(/\D/g, ''); 
     if (value === '') {
       setPriceInput('');
       return;
     }
-
     const numberValue = parseInt(value, 10) / 100;
-    
-    setPriceInput(
-      numberValue.toLocaleString('pt-BR', {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2
-      })
-    );
+    setPriceInput(numberValue.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
   };
 
-  // ATUALIZADO: Salva convertendo a máscara "1.500,00" para número real
   const handleSavePriceModal = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!priceModalItem) return;
 
-    const parsedPrice = priceInput.trim() !== '' 
+    const parsedUnitPrice = priceInput.trim() !== '' 
       ? parseFloat(priceInput.replace(/\./g, '').replace(',', '.')) 
       : 0;
     
-    await executeToggle(priceModalItem.id, true, !isNaN(parsedPrice) ? parsedPrice : 0);
+    const computedTotal = parsedUnitPrice * boughtQty;
+    
+    await executeToggle(priceModalItem.id, true, computedTotal, parsedUnitPrice, boughtQty);
     setPriceModalItem(null);
     setPriceInput('');
   };
@@ -290,7 +314,6 @@ export function ShoppingList() {
   const handleDelete = async (id: string) => {
     const previousItems = [...items];
     setItems(items.filter(item => item.id !== id));
-
     try {
       await itemService.deleteItem(id);
     } catch (error) {
@@ -299,12 +322,13 @@ export function ShoppingList() {
     }
   };
 
-  const handleSaveItem = async (name: string, quantity: string, observation: string, categoryId: string) => {
+  const handleSaveItem = async (name: string, quantity: number | null, unit: string | null, observation: string, categoryId: string) => {
     if (!homeId || !user) return;
 
     const formattedData = {
       name: name.trim(),
-      quantity: quantity ? quantity.trim() : undefined,
+      quantity: quantity,
+      unit: unit,
       observation: observation ? observation.trim() : undefined,
       category_id: categoryId || '🛒 Mantimentos'
     };
@@ -315,11 +339,7 @@ export function ShoppingList() {
       ));
       await itemService.updateItem(editingItem.id, formattedData);
     } else {
-      const newItem = {
-        ...formattedData,
-        home_id: homeId,
-        created_by: user.id
-      };
+      const newItem = { ...formattedData, home_id: homeId, created_by: user.id };
       const savedItem = await itemService.addItem(newItem as any);
       if (savedItem) {
         setItems(prev => [savedItem, ...prev.filter(i => i.id !== savedItem.id)]);
@@ -399,7 +419,7 @@ export function ShoppingList() {
                   <div key={item.id} className={isMarketMode ? 'py-1 text-lg' : ''}>
                     <ShoppingItemCard
                       name={item.name}
-                      quantity={item.quantity}
+                      quantity={item.quantity ? `${item.quantity} ${item.unit || ''}`.trim() : undefined}
                       observation={item.observation}
                       isCompleted={item.is_completed}
                       isMarketMode={isMarketMode}
@@ -433,7 +453,7 @@ export function ShoppingList() {
           <div key={item.id} className={isMarketMode ? 'py-1 text-lg' : ''}>
             <ShoppingItemCard
               name={item.name}
-              quantity={item.quantity}
+              quantity={item.quantity ? `${item.quantity} ${item.unit || ''}`.trim() : undefined}
               observation={item.observation}
               isCompleted={item.is_completed}
               isMarketMode={isMarketMode}
@@ -492,6 +512,7 @@ export function ShoppingList() {
               <NotificationBell />
               
               <button
+                ref={(el) => registerElement('btn-market-mode', el)}
                 onClick={handleToggleMarketMode}
                 className={`px-3.5 py-2.5 rounded-small text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm ${
                   isMarketMode 
@@ -531,7 +552,7 @@ export function ShoppingList() {
               )}
             </div>
           ) : (
-            <div className="bg-carrin-dark text-white p-4 rounded-card mb-6 flex justify-between items-center shadow-sm">
+            <div ref={(el) => registerElement('total-pending-bar', el)} className="bg-carrin-dark text-white p-4 rounded-card mb-6 flex justify-between items-center shadow-sm">
               <div>
                 <p className="text-xs text-gray-400">Total de itens</p>
                 <p className="text-xl font-bold">{items.length}</p>
@@ -545,7 +566,7 @@ export function ShoppingList() {
 
           {items.length > 0 && (
             <div className="mb-4 flex items-center gap-2">
-              <div className="relative flex-1">
+              <div ref={(el) => registerElement('search-bar', el)} className="relative flex-1">
                 <Search size={16} className="absolute left-3 top-3 text-gray-400" />
                 <input
                   type="text"
@@ -555,7 +576,7 @@ export function ShoppingList() {
                   className="w-full pl-9 pr-3 py-2.5 bg-white border border-gray-100 rounded-small text-sm focus:outline-none focus:border-emerald-600 transition-colors shadow-sm"
                 />
               </div>
-              <div className="relative shrink-0">
+              <div ref={(el) => registerElement('category-filter', el)} className="relative shrink-0">
                 <select
                   value={sortBy}
                   onChange={(e) => setSortBy(e.target.value as any)}
@@ -571,7 +592,7 @@ export function ShoppingList() {
           )}
         </div>
 
-        <div className="px-6">
+        <div ref={(el) => registerElement('list-items-area', el)} className="px-6">
           {loading ? (
             <p className="text-center text-gray-400 py-10">Carregando itens...</p>
           ) : items.length === 0 ? (
@@ -597,7 +618,7 @@ export function ShoppingList() {
                       <div key={item.id} className="relative">
                         <ShoppingItemCard
                           name={item.name}
-                          quantity={item.quantity}
+                          quantity={item.quantity ? `${item.quantity} ${item.unit || ''}`.trim() : undefined}
                           observation={item.observation}
                           isCompleted={item.is_completed}
                           isMarketMode={isMarketMode}
@@ -624,6 +645,7 @@ export function ShoppingList() {
         {!isMarketMode && (
           <div className="fixed bottom-20 left-0 w-full px-6 pointer-events-none">
             <button 
+              ref={(el) => registerElement('btn-add-item', el)}
               onClick={openAddModal}
               className="w-full bg-carrin-primary text-white py-4 rounded-button font-semibold shadow-sm pointer-events-auto hover:opacity-90 transition-all flex items-center justify-center gap-2"
             >
@@ -653,7 +675,7 @@ export function ShoppingList() {
 
       {/* ABA 2: HISTÓRICO */}
       <div className={currentTab === 'history' ? 'block' : 'hidden'}>
-        <History />
+        <History isActive={currentTab === 'history'} />
       </div>
 
       {/* ABA 3: CASA */}
@@ -700,8 +722,6 @@ export function ShoppingList() {
       {showTutorial && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
           <div className="bg-white w-full max-w-md rounded-card p-6 shadow-2xl animate-in zoom-in-95 duration-200">
-            
-            {/* NOVO CABEÇALHO COM BOTÃO FECHAR */}
             <div className="flex justify-between items-center mb-4">
               <div className="flex items-center gap-2 text-emerald-600">
                 <ShoppingCart size={28} />
@@ -736,61 +756,109 @@ export function ShoppingList() {
         </div>
       )}
 
-      {/* MODAL DE PREÇO ATUALIZADO */}
-      {priceModalItem && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white w-full max-w-sm rounded-card p-6 shadow-xl animate-in fade-in duration-200">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-bold text-carrin-dark">Preço do Item</h3>
-              <button onClick={() => {
-                setPriceModalItem(null);
-                setPriceInput('');
-              }} className="text-gray-400 hover:text-carrin-dark">
-                <X size={20} />
-              </button>
+      {/* MODAL DE PREÇO ATUALIZADO (MODO MERCADO) */}
+      {priceModalItem && (() => {
+        // Cálculo visual rápido enquanto o usuário digita
+        const parsedUnitPrice = priceInput.trim() !== '' ? parseFloat(priceInput.replace(/\./g, '').replace(',', '.')) : 0;
+        const liveTotal = parsedUnitPrice * boughtQty;
+
+        return (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white w-full max-w-sm rounded-card p-6 shadow-xl animate-in fade-in duration-200">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-lg font-bold text-carrin-dark truncate pr-4">{priceModalItem.name}</h3>
+                <button onClick={() => {
+                  setPriceModalItem(null);
+                  setPriceInput('');
+                }} className="text-gray-400 hover:text-carrin-dark shrink-0">
+                  <X size={20} />
+                </button>
+              </div>
+              
+              <form onSubmit={handleSavePriceModal} className="flex flex-col gap-5">
+                
+                {/* CONTROLE DE QUANTIDADE */}
+                <div>
+                  <p className="text-[10px] uppercase font-bold text-gray-400 tracking-wider mb-2">Qtd comprada</p>
+                  <div className="flex items-center justify-between bg-gray-50 border border-gray-200 rounded-small p-2">
+                    <button 
+                      type="button" 
+                      onClick={() => setBoughtQty(q => Math.max(0.1, q - 1))}
+                      className="w-10 h-10 flex items-center justify-center bg-white border border-gray-200 rounded text-gray-500 hover:text-carrin-dark hover:border-carrin-dark transition-colors shadow-sm"
+                    >
+                      <Minus size={18} />
+                    </button>
+                    
+                    <div className="flex flex-col items-center">
+                      <input 
+                        type="number" 
+                        step="any" 
+                        value={boughtQty} 
+                        onChange={(e) => setBoughtQty(Number(e.target.value))}
+                        className="w-20 text-center text-2xl font-extrabold bg-transparent outline-none text-carrin-dark"
+                      />
+                      {priceModalItem.unit && (
+                        <span className="text-[10px] text-gray-400 font-bold uppercase">{priceModalItem.unit}</span>
+                      )}
+                    </div>
+
+                    <button 
+                      type="button" 
+                      onClick={() => setBoughtQty(q => q + 1)}
+                      className="w-10 h-10 flex items-center justify-center bg-white border border-gray-200 rounded text-gray-500 hover:text-carrin-dark hover:border-carrin-dark transition-colors shadow-sm"
+                    >
+                      <Plus size={18} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* VALOR UNITÁRIO */}
+                <div>
+                  <p className="text-[10px] uppercase font-bold text-gray-400 tracking-wider mb-2">Valor Unitário</p>
+                  <div className="relative">
+                    <span className="absolute left-3 top-3.5 text-gray-400 font-bold">R$</span>
+                    <input
+                      type="tel"
+                      inputMode="numeric"
+                      placeholder="0,00"
+                      value={priceInput}
+                      onChange={handlePriceChange}
+                      autoFocus
+                      className="w-full pl-10 pr-3 py-3.5 bg-gray-50 border border-gray-200 rounded-small text-xl font-extrabold text-carrin-dark focus:outline-none focus:border-emerald-600 transition-colors"
+                    />
+                  </div>
+                </div>
+
+                {/* TOTAL CALCULADO */}
+                <div className="bg-emerald-50 border border-emerald-100 p-3 rounded-small flex justify-between items-center">
+                  <span className="text-xs font-bold text-emerald-800 uppercase tracking-wider">Total do item</span>
+                  <span className="text-xl font-extrabold text-emerald-600">R$ {liveTotal.toFixed(2)}</span>
+                </div>
+
+                <div className="flex gap-2 mt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      executeToggle(priceModalItem.id, true, 0, null, null);
+                      setPriceModalItem(null);
+                      setPriceInput('');
+                    }}
+                    className="w-1/2 bg-gray-100 text-gray-600 py-3 rounded-small font-bold text-sm hover:bg-gray-200 transition-colors"
+                  >
+                    Pular valor
+                  </button>
+                  <button
+                    type="submit"
+                    className="w-full bg-emerald-600 text-white py-3 rounded-small font-bold text-sm shadow hover:bg-emerald-700 transition-all"
+                  >
+                    Confirmar
+                  </button>
+                </div>
+              </form>
             </div>
-            
-            <p className="text-sm text-gray-600 mb-4">
-              Quanto custou <span className="font-bold text-carrin-dark">{priceModalItem.name}</span>?
-            </p>
-
-            <form onSubmit={handleSavePriceModal} className="flex flex-col gap-4">
-              <div className="relative">
-                <span className="absolute left-3 top-3.5 text-gray-400 font-bold">R$</span>
-                <input
-                  type="tel"
-                  inputMode="numeric"
-                  placeholder="0,00"
-                  value={priceInput}
-                  onChange={handlePriceChange}
-                  autoFocus
-                  className="w-full pl-10 pr-3 py-3.5 bg-gray-50 border border-gray-200 rounded-small text-xl font-extrabold text-carrin-dark focus:outline-none focus:border-emerald-600"
-                />
-              </div>
-
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    executeToggle(priceModalItem.id, true, 0);
-                    setPriceModalItem(null);
-                    setPriceInput('');
-                  }}
-                  className="w-1/2 bg-gray-100 text-gray-600 py-3 rounded-small font-semibold text-sm hover:bg-gray-200"
-                >
-                  Pular valor
-                </button>
-                <button
-                  type="submit"
-                  className="w-full bg-emerald-600 text-white py-3 rounded-small font-bold text-sm hover:bg-emerald-700"
-                >
-                  Confirmar
-                </button>
-              </div>
-            </form>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       <AddItemModal 
         isOpen={isModalOpen} 
@@ -798,7 +866,7 @@ export function ShoppingList() {
         onSave={handleSaveItem}
         initialData={editingItem}
         existingItems={items}
-        homePreferences={homePreferences} /* <-- ADICIONE ESTA LINHA AQUI */
+        homePreferences={homePreferences}
         onGoToExisting={(item) => {
           setIsModalOpen(false);
           setEditingItem(null);
@@ -815,14 +883,12 @@ export function ShoppingList() {
         loading={finishing}
       />
 
-      {/* --- RENDERIZANDO O MODAL (ETAPA E) --- */}
       <PushPermissionModal 
         isOpen={showPushPrompt} 
         onClose={handleDeclinePush} 
         onConfirm={handleEnablePush} 
       />
 
-      {/* Navegação Inferior Fixa */}
       {!isMarketMode && <BottomNav currentTab={currentTab} onTabChange={setCurrentTab} />}
     </div>
   );

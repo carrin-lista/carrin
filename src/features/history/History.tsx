@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAuthStore } from '../../stores/useAuthStore';
+import { supabase } from '../../services/supabase';
 import { historyService } from '../../services/historyService';
 import { itemService } from '../../services/itemService';
 import { homeService } from '../../services/homeService';
@@ -7,9 +8,16 @@ import {
   Calendar, ShoppingBag, CheckCircle2, 
   X, Clock, User, TrendingUp, RotateCcw, ChevronRight, AlertCircle, Check, Wallet, Share2
 } from 'lucide-react';
+import { useTutorialStore } from '../../stores/useTutorialStore';
 
-export function History() {
+interface HistoryProps {
+  isActive?: boolean;
+}
+
+export function History({ isActive }: HistoryProps) {
   const { user, homeId } = useAuthStore();
+  const { registerElement } = useTutorialStore();
+
   const [historyList, setHistoryList] = useState<any[]>([]);
   const [homeMembers, setHomeMembers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -19,11 +27,9 @@ export function History() {
   const [restoring, setRestoring] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // Estados do Módulo Pix
   const [showPixModal, setShowPixModal] = useState(false);
   const [splitMembers, setSplitMembers] = useState<string[]>([]);
 
-  // Trava o scroll do fundo se QUALQUER modal do histórico estiver aberto
   const isAnyModalOpen = !!(selectedReceipt || showPixModal || expandedImage);
 
   useEffect(() => {
@@ -37,25 +43,60 @@ export function History() {
     };
   }, [isAnyModalOpen]);
 
-  useEffect(() => {
-    async function loadData() {
-      if (!homeId) return;
-      try {
-        // Carrega o histórico e os moradores da casa simultaneamente
-        const [historyData, membersData] = await Promise.all([
-          historyService.getHistory(homeId),
-          homeService.getHomeMembers(homeId)
-        ]);
-        setHistoryList(historyData);
-        setHomeMembers(membersData);
-      } catch (error) {
-        console.error("Erro ao carregar dados do histórico:", error);
-      } finally {
-        setLoading(false);
-      }
+  const loadData = useCallback(async (isBackground = false) => {
+    if (!homeId) return;
+    if (!isBackground) setLoading(true);
+    try {
+      const [historyData, membersData] = await Promise.all([
+        historyService.getHistory(homeId),
+        homeService.getHomeMembers(homeId)
+      ]);
+      setHistoryList(historyData);
+      setHomeMembers(membersData);
+    } catch (error) {
+      console.error("Erro ao carregar dados do histórico:", error);
+    } finally {
+      if (!isBackground) setLoading(false);
     }
-    loadData();
   }, [homeId]);
+
+  // Carregamento inicial (apenas monta os dados)
+  useEffect(() => {
+    loadData(false);
+  }, [loadData]);
+
+  // Atualização baseada no ciclo de vida (aba ativada no próprio aparelho)
+  useEffect(() => {
+    if (isActive && homeId) {
+      loadData(true);
+    }
+  }, [isActive, homeId, loadData]);
+
+  // Atualização em tempo real (aparelhos de outros membros)
+  useEffect(() => {
+    if (!homeId) return;
+
+    const channel = supabase
+      .channel(`history_shopping_lists_${homeId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*', 
+          schema: 'public',
+          table: 'shopping_lists',
+          filter: `home_id=eq.${homeId}`
+        },
+        () => {
+          // Qualquer mudança em shopping_lists da casa força o recarregamento
+          loadData(true);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [homeId, loadData]);
 
   const showFeedback = (type: 'success' | 'error', text: string) => {
     setFeedback({ type, text });
@@ -71,6 +112,7 @@ export function History() {
         itemService.addItem({
           name: item.name,
           quantity: item.quantity,
+          unit: item.unit,
           observation: item.observation,
           category_id: item.category_id || '🛒 Mantimentos',
           home_id: homeId,
@@ -127,7 +169,6 @@ export function History() {
         }
       }
     } else {
-      console.warn("Web Share API não disponível no modo local (HTTP). Copiando texto.");
       fallbackCopy();
     }
   };
@@ -165,12 +206,12 @@ export function History() {
       </div>
 
       {historyList.length === 0 ? (
-        <div className="text-center py-12 bg-white rounded-card shadow-sm p-6">
+        <div ref={(el) => registerElement('history-main-area', el)} className="text-center py-12 bg-white rounded-card shadow-sm p-6">
           <p className="text-gray-400 mb-2 font-bold">Nenhuma compra finalizada.</p>
           <p className="text-xs text-gray-400">O registro da casa aparecerá aqui após você finalizar o Modo Mercado.</p>
         </div>
       ) : (
-        <div className="space-y-8">
+        <div ref={(el) => registerElement('history-main-area', el)} className="space-y-8">
           {Object.keys(groupedHistory).map((monthYear) => (
             <div key={monthYear} className="space-y-4">
               <h2 className="text-sm font-bold text-gray-400 uppercase tracking-wider pl-1 capitalize-first">
@@ -251,7 +292,6 @@ export function History() {
         </div>
       )}
 
-      {/* MODAL DE RECIBO MINIMALISTA */}
       {selectedReceipt && (() => {
         const date = new Date(selectedReceipt.completed_at);
         const fullDate = date.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' });
@@ -318,7 +358,6 @@ export function History() {
 
               <div className="p-5 overflow-y-auto space-y-6">
                 
-                {/* BOTÃO DE DIVISÃO VIA PIX */}
                 {total > 0 && homeMembers.length > 1 && (
                   <button
                     onClick={() => {
@@ -357,8 +396,14 @@ export function History() {
                         <div key={item.id} className="flex justify-between items-center text-sm">
                           <div className="flex items-center gap-2 overflow-hidden pr-2">
                             <span className="text-emerald-500 shrink-0"><CheckCircle2 size={14} /></span>
-                            <span className="text-carrin-dark font-medium truncate">{item.name}</span>
-                            {item.quantity && <span className="text-xs text-gray-400 shrink-0">x{item.quantity}</span>}
+                            <div className="flex flex-col">
+                              <span className="text-carrin-dark font-medium truncate">{item.name}</span>
+                              {item.bought_quantity > 0 && item.unit_price > 0 && (
+                                <span className="text-[10px] text-gray-400 font-medium leading-none">
+                                  {item.bought_quantity} {item.unit || 'und'} × R$ {Number(item.unit_price).toFixed(2)}
+                                </span>
+                              )}
+                            </div>
                           </div>
                           <span className="font-bold text-gray-700 shrink-0">
                             R$ {Number(item.price || 0).toFixed(2)}
@@ -427,7 +472,6 @@ export function History() {
         );
       })()}
 
-      {/* MODAL DE DIVISÃO DE CONTA (PIX) */}
       {showPixModal && selectedReceipt && (() => {
         const total = selectedReceipt.total_amount || 0;
         const count = splitMembers.length;

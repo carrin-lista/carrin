@@ -13,6 +13,16 @@ export const userService = {
     return data;
   },
 
+  // Verifica se o username já está em uso (chamando a RPC segura)
+  async checkUsernameAvailability(username: string): Promise<boolean> {
+    const { data, error } = await supabase.rpc('check_username_available', {
+      check_username: username
+    });
+
+    if (error) throw error;
+    return data as boolean;
+  },
+
   // Atualiza os dados do perfil
   async updateProfile(userId: string, updates: { full_name?: string; phone?: string; username?: string; avatar_url?: string | null }) {
     const { error } = await supabase

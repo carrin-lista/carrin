@@ -68,6 +68,14 @@ export function ShoppingList() {
   
   const [userPrefs, setUserPrefs] = useState<any>(null);
 
+  // CONTROLE DE PRIORIDADE: Push Modal vs Tutorial
+  const [pushPromptResolved, setPushPromptResolved] = useState(() => {
+    if (!('Notification' in window)) return true;
+    if (Notification.permission !== 'default') return true;
+    if (localStorage.getItem('carrin_push_prompt_seen')) return true;
+    return false; // Precisa resolver o modal de push primeiro
+  });
+
   const isAnyModalOpen = !!(priceModalItem || itemToUncheck || showTutorial || isFinishModalOpen || isModalOpen || showPushPrompt);
 
   useEffect(() => {
@@ -90,7 +98,9 @@ export function ShoppingList() {
     loadPrefs();
   }, [user?.id]);
 
+  // SEQUENCIAMENTO DO TUTORIAL
   useEffect(() => {
+    if (!pushPromptResolved) return; // Aguarda o modal de notificações ser resolvido
     if (!userPrefs || userPrefs.tutorial_version !== 1) return;
     if (activeTutorial) return;
 
@@ -116,7 +126,7 @@ export function ShoppingList() {
         startTutorial(currentKey as any);
       }, 500);
     }
-  }, [currentTab, userPrefs, activeTutorial, startTutorial]);
+  }, [currentTab, userPrefs, activeTutorial, startTutorial, pushPromptResolved]);
 
   const fetchItems = async () => {
     if (!homeId) return;
@@ -190,26 +200,25 @@ export function ShoppingList() {
     }
   }, [items.length, loading]);
 
+  // SEQUENCIAMENTO DE NOTIFICAÇÕES
   useEffect(() => {
-    if ('Notification' in window) {
-      const permission = Notification.permission;
-      const hasSeenPrompt = localStorage.getItem('carrin_push_prompt_seen');
-      if (permission === 'default' && !hasSeenPrompt) {
-        const timer = setTimeout(() => setShowPushPrompt(true), 3000);
-        return () => clearTimeout(timer);
-      }
+    if (!pushPromptResolved) {
+      const timer = setTimeout(() => setShowPushPrompt(true), 3000);
+      return () => clearTimeout(timer);
     }
-  }, []);
+  }, [pushPromptResolved]);
 
   const handleEnablePush = async () => {
     localStorage.setItem('carrin_push_prompt_seen', 'true');
     setShowPushPrompt(false);
+    setPushPromptResolved(true); // Libera o tutorial
     if (user) await notificationService.subscribeToPushNotifications(user.id);
   };
 
   const handleDeclinePush = () => {
     localStorage.setItem('carrin_push_prompt_seen', 'true');
     setShowPushPrompt(false);
+    setPushPromptResolved(true); // Libera o tutorial
   };
 
   const handleToggleMarketMode = () => {

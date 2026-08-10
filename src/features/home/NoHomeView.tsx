@@ -32,54 +32,63 @@ export function NoHomeView({ onHomeCreated }: { onHomeCreated: (id: string) => v
   };
 
   useEffect(() => {
-    if (user) {
-      userService.getProfile(user.id)
-        .then(setUserProfile)
-        .catch(console.error)
-        .finally(() => setLoadingProfile(false));
+    if (!user) return;
 
-      async function checkInvites() {
-        try {
-          const invite = await homeService.getPendingDirectInvites(user!.id);
-          if (invite) {
-            const enriched = await enrichInviteData(invite);
-            setIncomingInvite(enriched);
-          }
-        } catch (e) {
-          console.error(e);
+    // 1. Carrega o Perfil
+    userService.getProfile(user.id)
+      .then(setUserProfile)
+      .catch(console.error)
+      .finally(() => setLoadingProfile(false));
+
+    // Função centralizada para buscar e atualizar o estado do convite
+    const loadInvites = async () => {
+      try {
+        const invite = await homeService.getPendingDirectInvites(user.id);
+        if (invite) {
+          const enriched = await enrichInviteData(invite);
+          setIncomingInvite(enriched);
+        } else {
+          setIncomingInvite(null); // Limpa caso o convite tenha sido deletado
         }
+      } catch (e) {
+        console.error("Erro ao buscar convites:", e);
       }
-      checkInvites();
+    };
 
-      const channel = supabase
-        .channel(`user_invites_${user.id}`)
-        .on(
-          'postgres_changes',
-          {
-            event: 'INSERT',
-            schema: 'public',
-            table: 'home_invites',
-            filter: `target_user_id=eq.${user.id}`,
-          },
-          async (payload) => {
-            if (payload.new && payload.new.status === 'pending') {
-              try {
-                const details = await homeService.getInviteDetails(payload.new.id);
-                const enriched = await enrichInviteData(details);
-                setIncomingInvite(enriched);
-              } catch {
-                const enriched = await enrichInviteData(payload.new);
-                setIncomingInvite(enriched);
-              }
-            }
-          }
-        )
-        .subscribe();
+    // 2. Busca inicial
+    loadInvites();
 
-      return () => {
-        supabase.removeChannel(channel);
-      };
-    }
+    // 3. Camada 1: Supabase Realtime (App em foreground)
+    const channel = supabase
+      .channel(`user_invites_${user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*', // Ouve INSERT, UPDATE e DELETE
+          schema: 'public',
+          table: 'home_invites',
+          filter: `target_user_id=eq.${user.id}`,
+        },
+        () => {
+          // Refetch centralizado e limpo, sem tentar adivinhar estado pelo payload
+          loadInvites();
+        }
+      )
+      .subscribe();
+
+    // 4. Camada 2: Evento de Visibilidade (App voltando do background no celular)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        loadInvites();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    // 5. Limpeza das escutas no unmount
+    return () => {
+      supabase.removeChannel(channel);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, [user]);
 
   const handleLogout = async () => {

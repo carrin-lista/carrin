@@ -10,7 +10,7 @@ import { Splash } from './components/Splash';
 import { TutorialSpotlight } from './components/TutorialSpotlight';
 
 function App() {
-  const { user, setUser, homeId, setHomeId } = useAuthStore();
+  const { user, setUser, homeId, setHomeId, isRecoveringPassword, setIsRecoveringPassword } = useAuthStore();
   
   const [isInitializing, setIsInitializing] = useState(true);
   const [pendingDirectInviteId, setPendingDirectInviteId] = useState<string | null>(null);
@@ -55,19 +55,24 @@ function App() {
 
     initializeApp();
 
-    // Listener de autenticação silencioso (sem piscar a tela)
+    // Listener de autenticação silencioso
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       const currentUser = session?.user ?? null;
       
-      if (event === 'SIGNED_OUT') {
+      if (event === 'PASSWORD_RECOVERY') {
+        setIsRecoveringPassword(true);
+        setUser(currentUser, session);
+        window.history.replaceState({ appState: 'recovery' }, '', '/');
+      }
+      else if (event === 'SIGNED_OUT') {
         setUser(null, null);
         setHomeId(null);
         setPendingDirectInviteId(null);
+        setIsRecoveringPassword(false);
         window.history.replaceState({ appState: 'auth' }, '', '/');
       } 
       else if (event === 'SIGNED_IN' && currentUser) {
          setUser(currentUser, session);
-         // Atualiza a casa em background de forma invisível
          homeService.getUserHome(currentUser.id).then(home => {
            setHomeId(home ? home.home_id : null);
          });
@@ -89,12 +94,17 @@ function App() {
       subscription.unsubscribe();
       window.removeEventListener('popstate', handlePopState);
     };
-  }, [isInviteRoute, setHomeId, setUser, isInitializing]);
+  }, [isInviteRoute, setHomeId, setUser, setIsRecoveringPassword, isInitializing]);
 
-  // O Splash só aparece no carregamento inicial frio da aplicação
   if (isInitializing) return <Splash />;
 
   const renderContent = () => {
+    // 1. Se estiver tentando recuperar a senha, trava na tela de Auth ignorando outras rotas
+    if (isRecoveringPassword) {
+      return <Auth />;
+    }
+
+    // 2. Fluxo de convites
     if (isInviteRoute && inviteId) {
       if (!user) {
         return (
@@ -114,6 +124,7 @@ function App() {
       return <InviteView inviteId={pendingDirectInviteId} onAccepted={() => { window.location.href = '/'; }} />;
     }
 
+    // 3. Aplicação Padrão
     if (!user) return <Auth />;
     if (!homeId) return <NoHomeView onHomeCreated={(id) => setHomeId(id)} />;
     

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../../services/supabase';
 import { ShoppingItemCard } from '../../components/ShoppingItemCard';
 import { BottomNav } from '../../components/BottomNav';
@@ -52,7 +52,6 @@ export function ShoppingList() {
     return localStorage.getItem('carrin_market_session_active') === 'true';
   });
   
-  // Status Ultra Discreto do Modo Mercado
   const [syncStatus, setSyncStatus] = useState<'Salvando...' | 'Salvo ✓' | 'Sem conexão • pendente' | null>(null);
 
   const [showFabTooltip, setShowFabTooltip] = useState(false);
@@ -74,14 +73,13 @@ export function ShoppingList() {
   
   const [userPrefs, setUserPrefs] = useState<any>(null);
 
-  // LIMPEZA EM LOTE E DESFAZER
   const [showListMenu, setShowListMenu] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [clearingList, setClearingList] = useState(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
 
-  const [undoDelete, setUndoDelete] = useState<{ item: any, timerId: NodeJS.Timeout } | null>(null);
-  const [undoClear, setUndoClear] = useState<{ items: any[], timerId: NodeJS.Timeout } | null>(null);
+  const [undoDelete, setUndoDelete] = useState<{ item: any, timerId: ReturnType<typeof setTimeout> } | null>(null);
+  const [undoClear, setUndoClear] = useState<{ items: any[], timerId: ReturnType<typeof setTimeout> } | null>(null);
 
   const [pushPromptResolved, setPushPromptResolved] = useState(() => {
     if (!('Notification' in window)) return true;
@@ -133,7 +131,7 @@ export function ShoppingList() {
     }
   }, [currentTab, userPrefs, activeTutorial, startTutorial, pushPromptResolved]);
 
-  const fetchItems = async () => {
+  const fetchItems = useCallback(async () => {
     if (!homeId) return;
     try {
       const data = await itemService.getItems(homeId);
@@ -141,7 +139,7 @@ export function ShoppingList() {
     } catch (error) {
       console.error("Erro ao buscar itens atualizados:", error);
     }
-  };
+  }, [homeId]);
 
   useEffect(() => {
     localStorage.setItem('carrin_current_tab', currentTab);
@@ -182,7 +180,7 @@ export function ShoppingList() {
       ).subscribe();
 
     return () => { supabase.removeChannel(channel); };
-  }, [homeId]);
+  }, [homeId, fetchItems]);
 
   useEffect(() => {
     localStorage.setItem('carrin_is_market_mode', String(isMarketMode));
@@ -333,7 +331,6 @@ export function ShoppingList() {
     const item = items.find(i => i.id === itemId);
     if (!item || !homeId || !user) return;
 
-    // Atualiza otimista
     setItems(items.map(i => i.id === itemId ? { ...i, category_id: newCategoryId } : i));
     
     if (isMarketMode) setSyncStatus('Salvando...');
@@ -379,15 +376,21 @@ export function ShoppingList() {
     setUndoDelete(null);
 
     try {
-      await itemService.addItem({
+      const savedItem = await itemService.addItem({
         name: item.name,
         quantity: item.quantity,
         unit: item.unit,
         observation: item.observation,
         category_id: item.category_id || '🛒 Mantimentos',
         home_id: homeId,
-        created_by: user.id
+        created_by: item.created_by // PRESERVA O CRIADOR ORIGINAL
       } as any);
+      
+      // Atualiza o estado local imediatamente com o item rico para evitar piscar avatar
+      if (savedItem) {
+        setItems(prev => [savedItem, ...prev.filter(i => i.id !== savedItem.id)]);
+      }
+      
       setToastMsg('Item restaurado');
       setTimeout(() => setToastMsg(null), 3000);
     } catch (error) {
@@ -429,7 +432,7 @@ export function ShoppingList() {
       const currentNames = currentActive.map(i => normalizeStr(i.name));
       const itemsToAdd = snapshot.filter(item => !currentNames.includes(normalizeStr(item.name)));
 
-      await Promise.all(itemsToAdd.map(item =>
+      const restoredItems = await Promise.all(itemsToAdd.map(item =>
         itemService.addItem({
           name: item.name,
           quantity: item.quantity,
@@ -437,9 +440,16 @@ export function ShoppingList() {
           observation: item.observation,
           category_id: item.category_id || '🛒 Mantimentos',
           home_id: homeId,
-          created_by: user.id
+          created_by: item.created_by // PRESERVA O CRIADOR ORIGINAL INDIVIDUAL DE CADA ITEM
         } as any)
       ));
+      
+      // Atualiza o estado local com os itens enriquecidos
+      setItems(prev => {
+        const validRestored = restoredItems.filter(Boolean);
+        const restoredIds = validRestored.map(i => i.id);
+        return [...validRestored, ...prev.filter(i => !restoredIds.includes(i.id))];
+      });
       
       setToastMsg('Lista restaurada ✓');
       setTimeout(() => setToastMsg(null), 3000);
@@ -462,8 +472,8 @@ export function ShoppingList() {
     };
 
     if (editingItem) {
-      setItems(items.map(item => 
-        item.id === editingItem.id ? { ...item, ...formattedData } : item
+      setItems(items.map(i => 
+        i.id === editingItem.id ? { ...i, ...formattedData } : i
       ));
       if (isMarketMode) setSyncStatus('Salvando...');
       try {
@@ -673,7 +683,6 @@ export function ShoppingList() {
   return (
     <div className="w-full min-h-screen bg-carrin-bg relative overflow-x-hidden">
       
-      {/* Toast Comum */}
       {toastMsg && (
         <div className="fixed top-6 left-1/2 -translate-x-1/2 bg-[#059669] text-white px-5 py-2.5 rounded-full flex items-center gap-4 shadow-lg z-[9999] w-max max-w-[90vw] animate-in fade-in slide-in-from-top-4 duration-300">
           <div className="flex items-center gap-2">
@@ -686,7 +695,6 @@ export function ShoppingList() {
         </div>
       )}
 
-      {/* Toast Desfazer Exclusão Individual */}
       {undoDelete && (
         <div className="fixed bottom-24 left-1/2 -translate-x-1/2 bg-carrin-dark text-white px-5 py-3 rounded-full flex items-center gap-4 shadow-2xl z-[9999] w-max max-w-[90vw] animate-in fade-in slide-in-from-bottom-4 duration-300">
           <span className="font-semibold text-sm">Item removido</span>
@@ -697,7 +705,6 @@ export function ShoppingList() {
         </div>
       )}
 
-      {/* Toast Desfazer Limpeza */}
       {undoClear && (
         <div className="fixed bottom-24 left-1/2 -translate-x-1/2 bg-carrin-dark text-white px-5 py-3 rounded-full flex items-center gap-4 shadow-2xl z-[9999] w-max max-w-[90vw] animate-in fade-in slide-in-from-bottom-4 duration-300">
           <span className="font-semibold text-sm">Lista limpa</span>

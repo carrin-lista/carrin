@@ -77,7 +77,6 @@ export const historyService = {
     return data || [];
   },
 
-  // Retorna uma lista de nomes únicos de mercados das últimas compras
   async getRecentMarkets(homeId: string): Promise<string[]> {
     const { data, error } = await supabase
       .from('shopping_lists')
@@ -94,10 +93,9 @@ export const historyService = {
     }
 
     const uniqueMarkets = Array.from(new Set(data.map(item => item.market_name!.trim()))).filter(Boolean);
-    return uniqueMarkets.slice(0, 5); // Retorna no máximo os 5 mais recentes
+    return uniqueMarkets.slice(0, 5); 
   },
 
-  // Atualiza apenas o mercado de uma compra já finalizada
   async updateMarketName(listId: string, marketName: string | null) {
     const { error } = await supabase
       .from('shopping_lists')

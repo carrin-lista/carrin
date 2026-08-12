@@ -17,7 +17,7 @@ export const itemService = {
       .select('id')
       .eq('home_id', homeId)
       .eq('status', 'active')
-      .single();
+      .maybeSingle();
 
     if (existingList) return existingList.id;
 
@@ -105,7 +105,6 @@ export const itemService = {
     if (error) throw error;
   },
 
-  // NOVA FUNÇÃO: Busca sugestões do próprio histórico da casa
   async getRecentItemSuggestions(homeId: string, query: string) {
     if (!query || query.trim().length < 2) return [];
     
@@ -116,7 +115,7 @@ export const itemService = {
       .eq('is_completed', true)
       .ilike('name', `%${query.trim()}%`)
       .order('updated_at', { ascending: false })
-      .limit(20); // Busca um bloco seguro para deduplicar
+      .limit(20);
 
     if (error) {
       console.error("Erro ao buscar sugestões:", error);
@@ -134,6 +133,6 @@ export const itemService = {
       }
     }
     
-    return uniqueItems.slice(0, 4); // Retorna no máximo 4 opções diretas
+    return uniqueItems.slice(0, 4);
   }
 };

@@ -117,6 +117,12 @@ export function History({ isActive }: HistoryProps) {
     setTimeout(() => setFeedback(null), 4000);
   };
 
+  const toggleSplitMember = (userId: string) => {
+    setSplitMembers(prev => 
+      prev.includes(userId) ? prev.filter(id => id !== userId) : [...prev, userId]
+    );
+  };
+
   const handleRestoreUnboughtItems = async (unboughtItems: any[]) => {
     if (!homeId || !user || unboughtItems.length === 0) return;
     setRestoring(true);
@@ -265,7 +271,6 @@ export function History({ isActive }: HistoryProps) {
     setShowPixModal(false);
   };
 
-  // Função unificada de compartilhamento utilizando estritamente o padrão seguro de Web Share com fallback limpo
   const executeShare = async (text: string) => {
     const fallbackCopy = () => {
       if (navigator?.clipboard?.writeText) {

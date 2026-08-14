@@ -3,16 +3,21 @@ import { useAuthStore } from '../../stores/useAuthStore';
 import { preferenceService, type UserPreferences } from '../../services/preferenceService';
 import { userService } from '../../services/userService';
 import { supabase } from '../../services/supabase';
-import { LogOut, User, Bell, Edit3, Save, X, Check, AlertCircle, Camera, Trash2 } from 'lucide-react';
+import { LogOut, User, Bell, Edit3, Save, X, Check, AlertCircle, Camera, Trash2, CreditCard, ChevronRight } from 'lucide-react';
 import { notificationService } from '../../services/notificationService';
 import { useTutorialStore } from '../../stores/useTutorialStore';
+import { Checkout } from './Checkout'; 
+import { ManageSubscription } from './ManageSubscription'; 
 
 export function Settings() {
-  const { user } = useAuthStore();
+  const { user, homeId } = useAuthStore();
   const { registerElement } = useTutorialStore();
   
   const [loading, setLoading] = useState(true);
   const [userProfile, setUserProfile] = useState<any>(null);
+  const [billingState, setBillingState] = useState<any>(null);
+  const [userRole, setUserRole] = useState<string | null>(null);
+
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [showAvatarMenu, setShowAvatarMenu] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -23,6 +28,9 @@ export function Settings() {
   const [editPhone, setEditPhone] = useState('');
   const [savingProfile, setSavingProfile] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  const [showCheckout, setShowCheckout] = useState(false);
+  const [showManage, setShowManage] = useState(false);
 
   const [preferences, setPreferences] = useState<UserPreferences>({
     notify_home_updates: true,
@@ -51,6 +59,15 @@ export function Settings() {
           setEditUsername(profileData.username || '');
           setEditPhone(profileData.phone || '');
         }
+
+        if (homeId) {
+          const [memberRes, commercialRes] = await Promise.all([
+            supabase.from('home_members').select('role').eq('home_id', homeId).eq('user_id', user.id).single(),
+            supabase.from('house_commercial_states').select('*').eq('home_id', homeId).single()
+          ]);
+          if (memberRes.data) setUserRole(memberRes.data.role);
+          if (commercialRes.data) setBillingState(commercialRes.data);
+        }
       } catch (error) {
         console.error("Erro ao carregar dados:", error);
       } finally {
@@ -58,19 +75,29 @@ export function Settings() {
       }
     }
     loadData();
-  }, [user]);
+  }, [user, homeId]);
+
+  // Ouvinte em Tempo Real para mudar status e cores instantaneamente
+  useEffect(() => {
+    if (!homeId) return;
+    const channel = supabase
+      .channel(`settings_commercial_${homeId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'house_commercial_states', filter: `home_id=eq.${homeId}` },
+        (payload) => {
+          setBillingState(payload.new);
+        }
+      ).subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [homeId]);
 
   const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     let value = e.target.value.replace(/\D/g, '');
     if (value.length > 11) value = value.slice(0, 11);
-
-    if (value.length > 6) {
-      value = `(${value.slice(0, 2)}) ${value.slice(2, 7)}-${value.slice(7)}`;
-    } else if (value.length > 2) {
-      value = `(${value.slice(0, 2)}) ${value.slice(2)}`;
-    } else if (value.length > 0) {
-      value = `(${value}`;
-    }
+    if (value.length > 6) { value = `(${value.slice(0, 2)}) ${value.slice(2, 7)}-${value.slice(7)}`; } 
+    else if (value.length > 2) { value = `(${value.slice(0, 2)}) ${value.slice(2)}`; } 
+    else if (value.length > 0) { value = `(${value}`; }
     setEditPhone(value);
   };
 
@@ -80,18 +107,12 @@ export function Settings() {
       setUploadingAvatar(true);
       setShowAvatarMenu(false);
       const file = event.target.files[0];
-      
-      if (userProfile?.avatar_url) {
-        await userService.deleteAvatar(userProfile.avatar_url);
-      }
-
+      if (userProfile?.avatar_url) await userService.deleteAvatar(userProfile.avatar_url);
       const publicUrl = await userService.uploadAvatar(user.id, file);
-      
       await userService.updateProfile(user.id, { avatar_url: publicUrl });
       setUserProfile({ ...userProfile, avatar_url: publicUrl });
       showFeedback('success', 'Foto atualizada com sucesso!');
     } catch (error) {
-      console.error(error);
       showFeedback('error', 'Erro ao atualizar foto. Verifique a conexão.');
     } finally {
       setUploadingAvatar(false);
@@ -103,13 +124,11 @@ export function Settings() {
       if (!user || !userProfile?.avatar_url) return;
       setUploadingAvatar(true);
       setShowAvatarMenu(false);
-      
       await userService.deleteAvatar(userProfile.avatar_url);
       await userService.updateProfile(user.id, { avatar_url: null });
       setUserProfile({ ...userProfile, avatar_url: null });
       showFeedback('success', 'Foto removida com sucesso!');
     } catch (error) {
-      console.error(error);
       showFeedback('error', 'Erro ao remover foto.');
     } finally {
       setUploadingAvatar(false);
@@ -119,26 +138,16 @@ export function Settings() {
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
-
     setSavingProfile(true);
     try {
       let formattedUsername = editUsername.trim().toLowerCase();
-      if (formattedUsername && !formattedUsername.startsWith('@')) {
-        formattedUsername = '@' + formattedUsername;
-      }
-
-      const updatedFields = {
-        full_name: editFullName.trim(),
-        username: formattedUsername,
-        phone: editPhone.trim() || undefined,
-      };
-
+      if (formattedUsername && !formattedUsername.startsWith('@')) formattedUsername = '@' + formattedUsername;
+      const updatedFields = { full_name: editFullName.trim(), username: formattedUsername, phone: editPhone.trim() || undefined };
       await userService.updateProfile(user.id, updatedFields);
       setUserProfile((prev: any) => ({ ...prev, ...updatedFields }));
       setIsEditingProfile(false);
       showFeedback('success', 'Perfil atualizado com sucesso!');
     } catch (error: any) {
-      console.error('Erro ao salvar perfil:', error);
       showFeedback('error', error.message || 'Erro ao atualizar perfil.');
     } finally {
       setSavingProfile(false);
@@ -162,16 +171,68 @@ export function Settings() {
     window.location.href = '/';
   };
 
+  // CÓPIA CORRIGIDA E CONCEITUALMENTE ALINHADA (Sem confundir preço de plano com assinatura ativa)
+  const getBillingSubtitle = () => {
+    if (loading) return { text: 'Carregando...', color: 'text-gray-500' };
+    if (!billingState) return { text: 'Verificando assinatura...', color: 'text-gray-500' };
+    if (userRole !== 'owner') return { text: 'Gerenciada pelo Dono da Casa', color: 'text-gray-500' };
+
+    const { status, trial_ends_at, current_period_end } = billingState;
+    const now = new Date().getTime();
+
+    switch (status) {
+      case 'TRIAL': {
+        if (trial_ends_at) {
+          const days = Math.ceil((new Date(trial_ends_at).getTime() - now) / (1000 * 3600 * 24));
+          if (days <= 0) {
+            return { text: 'Período gratuito encerrado', color: 'text-red-500 font-bold' };
+          }
+          return { text: `Período gratuito • ${Math.max(0, days)} dias restantes`, color: 'text-blue-500' };
+        }
+        return { text: 'Período gratuito', color: 'text-blue-500' };
+      }
+      case 'ACTIVE':
+        return { text: 'Ativa • R$ 19/mês', color: 'text-emerald-600 font-bold' };
+      case 'PAST_DUE':
+        return { text: 'Pagamento pendente', color: 'text-red-500 font-bold' };
+      case 'CANCELLED': {
+        const hasAccess = current_period_end ? new Date(current_period_end).getTime() >= now : false;
+        if (hasAccess && current_period_end) {
+          const date = new Date(current_period_end).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+          return { text: `Cancelada • acesso até ${date}`, color: 'text-amber-500 font-bold' };
+        }
+        return { text: 'Assinatura inativa', color: 'text-red-500 font-bold' };
+      }
+      case 'LEGACY': {
+        const isExpired = current_period_end ? new Date(current_period_end).getTime() < now : false;
+        if (isExpired) {
+          return { text: 'Período de transição encerrado', color: 'text-red-500 font-bold' };
+        }
+        return { text: 'Casa pré-monetização', color: 'text-gray-500' };
+      }
+      case 'INTERNAL':
+        return { text: 'Casa Interna (Gratuita)', color: 'text-emerald-600 font-bold' };
+      case 'INACTIVE':
+        return { text: 'Sem assinatura • R$ 19/mês', color: 'text-gray-500' };
+      case 'PAYMENT_REVIEW':
+        return { text: 'Pagamento em análise', color: 'text-blue-500 font-bold' };
+      default:
+        return { text: 'Sem assinatura • R$ 19/mês', color: 'text-gray-500' };
+    }
+  };
+
+  if (showCheckout) return <Checkout onBack={() => setShowCheckout(false)} />;
+  if (showManage) return <ManageSubscription onBack={() => setShowManage(false)} billingState={billingState} />;
+
+  const billingUI = getBillingSubtitle();
+
   return (
     <div className="min-h-screen bg-carrin-bg p-6 pb-32 max-w-lg mx-auto space-y-6 relative">
-      
       {feedback && (
         <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-3 rounded-card shadow-lg text-xs font-bold flex items-center gap-2 animate-in fade-in slide-in-from-top duration-200 whitespace-nowrap w-max max-w-[95vw] overflow-hidden ${feedback.type === 'success' ? 'bg-emerald-600 text-white' : 'bg-red-600 text-white'}`}>
           {feedback.type === 'success' ? <Check size={16} className="shrink-0" /> : <AlertCircle size={16} className="shrink-0" />}
           <span className="truncate">{feedback.text}</span>
-          <button onClick={() => setFeedback(null)} className="ml-2 opacity-75 hover:opacity-100 shrink-0">
-            <X size={14} />
-          </button>
+          <button onClick={() => setFeedback(null)} className="ml-2 opacity-75 hover:opacity-100 shrink-0"><X size={14} /></button>
         </div>
       )}
 
@@ -187,12 +248,7 @@ export function Settings() {
             <span>Meu Perfil</span>
           </div>
           {!isEditingProfile && !loading && (
-            <button 
-              onClick={() => setIsEditingProfile(true)}
-              className="text-xs text-emerald-600 font-bold hover:underline flex items-center gap-1"
-            >
-              <Edit3 size={14} /> Editar
-            </button>
+            <button onClick={() => setIsEditingProfile(true)} className="text-xs text-emerald-600 font-bold hover:underline flex items-center gap-1"><Edit3 size={14} /> Editar</button>
           )}
         </div>
 
@@ -200,57 +256,23 @@ export function Settings() {
           <p className="text-sm text-gray-400">Carregando perfil...</p>
         ) : isEditingProfile ? (
           <form onSubmit={handleSaveProfile} className="space-y-4 pt-1">
-            
             <div className="flex items-center gap-4">
-              <div 
-                onClick={() => setShowAvatarMenu(!showAvatarMenu)}
-                className="relative w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center text-gray-400 shrink-0 overflow-hidden border-2 border-emerald-500 cursor-pointer group shadow-sm"
-                title="Clique para alterar a foto"
-              >
-                {uploadingAvatar ? (
-                  <span className="text-xs font-medium animate-pulse">...</span>
-                ) : userProfile?.avatar_url ? (
-                  <img src={userProfile.avatar_url} alt="Avatar" className="w-full h-full object-cover group-hover:opacity-75 transition-opacity" />
-                ) : (
-                  <User size={32} className="group-hover:opacity-75 transition-opacity" />
-                )}
-                <div className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity text-white">
-                  <Camera size={20} />
-                </div>
+              <div onClick={() => setShowAvatarMenu(!showAvatarMenu)} className="relative w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center text-gray-400 shrink-0 overflow-hidden border-2 border-emerald-500 cursor-pointer group shadow-sm">
+                {uploadingAvatar ? ( <span className="text-xs font-medium animate-pulse">...</span> ) : userProfile?.avatar_url ? ( <img src={userProfile.avatar_url} alt="Avatar" className="w-full h-full object-cover group-hover:opacity-75 transition-opacity" /> ) : ( <User size={32} className="group-hover:opacity-75 transition-opacity" /> )}
+                <div className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity text-white"><Camera size={20} /></div>
               </div>
-
               <div>
                 <p className="text-xs font-bold text-carrin-dark">Toque na foto para alterar</p>
                 <p className="text-[11px] text-gray-400">Insira ou remova sua imagem de exibição</p>
               </div>
-
-              <input 
-                type="file" 
-                ref={fileInputRef} 
-                accept="image/*" 
-                onChange={handleAvatarUpload} 
-                disabled={uploadingAvatar} 
-                className="hidden" 
-              />
+              <input type="file" ref={fileInputRef} accept="image/*" onChange={handleAvatarUpload} disabled={uploadingAvatar} className="hidden" />
             </div>
 
             {showAvatarMenu && (
               <div className="bg-gray-50 border border-gray-200 rounded-small p-2 flex gap-2 animate-in fade-in duration-150">
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="flex-1 bg-white border border-gray-200 py-2 px-3 rounded text-xs font-bold text-carrin-dark hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-200 transition-colors flex items-center justify-center gap-1.5 shadow-sm"
-                >
-                  <Camera size={14} /> Trocar foto
-                </button>
+                <button type="button" onClick={() => fileInputRef.current?.click()} className="flex-1 bg-white border border-gray-200 py-2 px-3 rounded text-xs font-bold text-carrin-dark hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-200 transition-colors flex items-center justify-center gap-1.5 shadow-sm"><Camera size={14} /> Trocar foto</button>
                 {userProfile?.avatar_url && (
-                  <button
-                    type="button"
-                    onClick={handleRemoveAvatar}
-                    className="flex-1 bg-white border border-gray-200 py-2 px-3 rounded text-xs font-bold text-red-500 hover:bg-red-50 hover:border-red-200 transition-colors flex items-center justify-center gap-1.5 shadow-sm"
-                  >
-                    <Trash2 size={14} /> Remover foto
-                  </button>
+                  <button type="button" onClick={handleRemoveAvatar} className="flex-1 bg-white border border-gray-200 py-2 px-3 rounded text-xs font-bold text-red-500 hover:bg-red-50 hover:border-red-200 transition-colors flex items-center justify-center gap-1.5 shadow-sm"><Trash2 size={14} /> Remover foto</button>
                 )}
               </div>
             )}
@@ -258,88 +280,33 @@ export function Settings() {
             <div className="space-y-3 pt-2">
               <div>
                 <label className="text-[10px] text-gray-400 uppercase font-bold tracking-wider mb-1 block">Identificação Pública (@username)</label>
-                <input 
-                  type="text"
-                  value={editUsername}
-                  onChange={(e) => setEditUsername(e.target.value)}
-                  placeholder="@username"
-                  required
-                  className="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-sm font-bold text-carrin-dark outline-none focus:border-emerald-600"
-                />
+                <input type="text" value={editUsername} onChange={(e) => setEditUsername(e.target.value)} placeholder="@username" required className="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-sm font-bold text-carrin-dark outline-none focus:border-emerald-600" />
               </div>
-
               <div>
                 <label className="text-[10px] text-gray-400 uppercase font-bold tracking-wider mb-1 block">Nome Completo</label>
-                <input 
-                  type="text"
-                  value={editFullName}
-                  onChange={(e) => setEditFullName(e.target.value)}
-                  placeholder="Seu nome completo"
-                  required
-                  className="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-sm font-medium text-carrin-dark outline-none focus:border-emerald-600"
-                />
+                <input type="text" value={editFullName} onChange={(e) => setEditFullName(e.target.value)} placeholder="Seu nome completo" required className="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-sm font-medium text-carrin-dark outline-none focus:border-emerald-600" />
               </div>
-
               <div>
                 <label className="text-[10px] text-gray-400 uppercase font-bold tracking-wider mb-1 block">Telefone / WhatsApp (Opcional)</label>
-                <input 
-                  type="tel"
-                  value={editPhone}
-                  onChange={handlePhoneChange}
-                  placeholder="(99) 99999-9999"
-                  maxLength={15}
-                  className="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-sm font-medium text-carrin-dark outline-none focus:border-emerald-600"
-                />
+                <input type="tel" value={editPhone} onChange={handlePhoneChange} placeholder="(99) 99999-9999" maxLength={15} className="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2 text-sm font-medium text-carrin-dark outline-none focus:border-emerald-600" />
               </div>
-
               <div>
                 <label className="text-[10px] text-gray-400 uppercase font-bold tracking-wider mb-1 block">E-mail (Login - Não pode ser alterado)</label>
-                <input 
-                  type="email"
-                  value={userProfile?.email || user?.email || ''}
-                  disabled
-                  className="w-full bg-gray-100 border border-gray-200 rounded px-3 py-2 text-sm font-medium text-gray-500 cursor-not-allowed select-none"
-                />
+                <input type="email" value={userProfile?.email || user?.email || ''} disabled className="w-full bg-gray-100 border border-gray-200 rounded px-3 py-2 text-sm font-medium text-gray-500 cursor-not-allowed select-none" />
               </div>
             </div>
 
             <div className="flex gap-2 pt-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setIsEditingProfile(false);
-                  setShowAvatarMenu(false);
-                  setEditFullName(userProfile?.full_name || '');
-                  setEditUsername(userProfile?.username || '');
-                  setEditPhone(userProfile?.phone || '');
-                }}
-                className="flex-1 bg-gray-100 text-gray-600 py-2.5 rounded-small font-bold text-xs hover:bg-gray-200 transition-colors"
-              >
-                Cancelar
-              </button>
-              <button
-                type="submit"
-                disabled={savingProfile}
-                className="flex-1 bg-emerald-600 text-white py-2.5 rounded-small font-bold text-xs hover:bg-emerald-700 transition-colors shadow-sm flex items-center justify-center gap-1.5 disabled:opacity-50"
-              >
-                <Save size={14} />
-                <span>{savingProfile ? 'Salvando...' : 'Salvar'}</span>
-              </button>
+              <button type="button" onClick={() => { setIsEditingProfile(false); setShowAvatarMenu(false); setEditFullName(userProfile?.full_name || ''); setEditUsername(userProfile?.username || ''); setEditPhone(userProfile?.phone || ''); }} className="flex-1 bg-gray-100 text-gray-600 py-2.5 rounded-small font-bold text-xs hover:bg-gray-200 transition-colors">Cancelar</button>
+              <button type="submit" disabled={savingProfile} className="flex-1 bg-emerald-600 text-white py-2.5 rounded-small font-bold text-xs hover:bg-emerald-700 transition-colors shadow-sm flex items-center justify-center gap-1.5 disabled:opacity-50"><Save size={14} /><span>{savingProfile ? 'Salvando...' : 'Salvar'}</span></button>
             </div>
           </form>
         ) : (
           <div className="space-y-5">
             <div className="flex items-center gap-4">
               <div className="relative w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center text-gray-400 shrink-0 overflow-hidden border border-gray-200 shadow-sm">
-                {uploadingAvatar ? (
-                  <span className="text-xs font-medium animate-pulse">...</span>
-                ) : userProfile?.avatar_url ? (
-                  <img src={userProfile.avatar_url} alt="Avatar" className="w-full h-full object-cover" />
-                ) : (
-                  <User size={32} />
-                )}
+                {uploadingAvatar ? ( <span className="text-xs font-medium animate-pulse">...</span> ) : userProfile?.avatar_url ? ( <img src={userProfile.avatar_url} alt="Avatar" className="w-full h-full object-cover" /> ) : ( <User size={32} /> )}
               </div>
-              
               <div>
                 <p className="text-sm font-bold text-carrin-dark">{userProfile?.full_name || 'Morador'}</p>
                 <p className="text-xs font-semibold text-emerald-600">{userProfile?.username || '@username'}</p>
@@ -347,26 +314,41 @@ export function Settings() {
             </div>
 
             <div className="space-y-3 pt-2">
-              <div>
-                <p className="text-[10px] text-gray-400 uppercase font-bold tracking-wider mb-0.5">Identificação Pública</p>
-                <p className="text-sm font-bold text-carrin-dark">{userProfile?.username || 'Não informado'}</p>
-              </div>
-              <div>
-                <p className="text-[10px] text-gray-400 uppercase font-bold tracking-wider mb-0.5">Nome Completo</p>
-                <p className="text-sm font-medium text-carrin-dark">{userProfile?.full_name || 'Não informado'}</p>
-              </div>
-              <div>
-                <p className="text-[10px] text-gray-400 uppercase font-bold tracking-wider mb-0.5">E-mail (Login)</p>
-                <p className="text-sm font-medium text-gray-500">{userProfile?.email || user?.email}</p>
-              </div>
-              <div>
-                <p className="text-[10px] text-gray-400 uppercase font-bold tracking-wider mb-0.5">Telefone</p>
-                <p className="text-sm font-medium text-gray-500">{userProfile?.phone || 'Não informado'}</p>
-              </div>
+              <div><p className="text-[10px] text-gray-400 uppercase font-bold tracking-wider mb-0.5">Identificação Pública</p><p className="text-sm font-bold text-carrin-dark">{userProfile?.username || 'Não informado'}</p></div>
+              <div><p className="text-[10px] text-gray-400 uppercase font-bold tracking-wider mb-0.5">Nome Completo</p><p className="text-sm font-medium text-carrin-dark">{userProfile?.full_name || 'Não informado'}</p></div>
+              <div><p className="text-[10px] text-gray-400 uppercase font-bold tracking-wider mb-0.5">E-mail (Login)</p><p className="text-sm font-medium text-gray-500">{userProfile?.email || user?.email}</p></div>
+              <div><p className="text-[10px] text-gray-400 uppercase font-bold tracking-wider mb-0.5">Telefone</p><p className="text-sm font-medium text-gray-500">{userProfile?.phone || 'Não informado'}</p></div>
             </div>
           </div>
         )}
       </div>
+
+      {/* CARD DE ASSINATURA */}
+      {homeId && (
+        <div className={`bg-white rounded-card p-5 shadow-sm space-y-4 border ${billingState?.status === 'INACTIVE' ? 'border-red-200' : 'border-gray-100'}`}>
+          <div className="flex items-center gap-2 text-carrin-dark font-semibold pb-2 border-b border-gray-50">
+            <CreditCard size={20} className="text-carrin-primary" />
+            <span>Assinatura</span>
+          </div>
+
+          <div 
+            onClick={() => {
+              if (userRole === 'owner') {
+                const activeStatuses = ['ACTIVE', 'PAST_DUE', 'PAYMENT_REVIEW', 'CANCELLED'];
+                if (billingState && activeStatuses.includes(billingState.status)) { setShowManage(true); } 
+                else { setShowCheckout(true); }
+              }
+            }}
+            className={`flex items-center justify-between ${userRole === 'owner' ? 'cursor-pointer hover:opacity-80 transition-opacity' : ''}`}
+          >
+            <div>
+              <p className="text-sm font-bold text-carrin-dark">Assinatura da Casa</p>
+              <p className={`text-xs mt-0.5 ${billingUI.color}`}>{billingUI.text}</p>
+            </div>
+            {userRole === 'owner' && <ChevronRight size={18} className="text-gray-400" />}
+          </div>
+        </div>
+      )}
 
       <div ref={(el) => registerElement('settings-home-area', el)} className="bg-white rounded-card p-5 shadow-sm space-y-4 border border-gray-100">
         <div className="flex items-center gap-2 text-carrin-dark font-semibold pb-2 border-b border-gray-50">
@@ -378,66 +360,37 @@ export function Settings() {
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-gray-700 w-2/3">Atualizações da Casa (Itens comprados/adicionados)</span>
             <label className="relative inline-flex items-center cursor-pointer">
-              <input 
-                type="checkbox" 
-                checked={preferences.notify_home_updates}
-                onChange={() => handleToggle('notify_home_updates')}
-                className="sr-only peer"
-              />
+              <input type="checkbox" checked={preferences.notify_home_updates} onChange={() => handleToggle('notify_home_updates')} className="sr-only peer" />
               <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
             </label>
           </div>
-
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-gray-700">Lembretes de dia de mercado</span>
             <label className="relative inline-flex items-center cursor-pointer">
-              <input 
-                type="checkbox" 
-                checked={preferences.notify_reminders}
-                onChange={() => handleToggle('notify_reminders')}
-                className="sr-only peer"
-              />
+              <input type="checkbox" checked={preferences.notify_reminders} onChange={() => handleToggle('notify_reminders')} className="sr-only peer" />
               <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
             </label>
           </div>
-
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-gray-700">Sugestões de produtos recorrentes</span>
             <label className="relative inline-flex items-center cursor-pointer">
-              <input 
-                type="checkbox" 
-                checked={preferences.notify_suggestions}
-                onChange={() => handleToggle('notify_suggestions')}
-                className="sr-only peer"
-              />
+              <input type="checkbox" checked={preferences.notify_suggestions} onChange={() => handleToggle('notify_suggestions')} className="sr-only peer" />
               <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
             </label>
           </div>
         </div>
 
         <div className="mt-6 pt-4 border-t border-gray-100">
-          <button
-            onClick={async () => {
-              if (!user) return;
-              await notificationService.subscribeToPushNotifications(user.id);
-              showFeedback('success', 'Aparelho conectado! Você receberá alertas.');
-            }}
-            className="w-full bg-gray-50 border border-gray-200 text-carrin-dark py-3 rounded-small font-semibold text-sm hover:bg-gray-100 transition-colors flex justify-center items-center gap-2"
-          >
+          <button onClick={async () => { if (!user) return; await notificationService.subscribeToPushNotifications(user.id); showFeedback('success', 'Aparelho conectado! Você receberá alertas.'); }} className="w-full bg-gray-50 border border-gray-200 text-carrin-dark py-3 rounded-small font-semibold text-sm hover:bg-gray-100 transition-colors flex justify-center items-center gap-2">
             <Bell size={16} className="text-emerald-600" />
             Ativar Alertas Neste Aparelho
           </button>
-          <p className="text-center text-[10px] text-gray-400 mt-2">
-            Você precisa ativar isso em cada celular que quiser receber avisos.
-          </p>
+          <p className="text-center text-[10px] text-gray-400 mt-2">Você precisa ativar isso em cada celular que quiser receber avisos.</p>
         </div>
       </div>
 
       <div className="bg-white rounded-card p-5 shadow-sm border border-gray-100">
-        <button
-          onClick={handleLogout}
-          className="w-full flex items-center justify-center gap-2 text-red-500 font-medium py-2 hover:bg-red-50 rounded-small transition-colors"
-        >
+        <button onClick={handleLogout} className="w-full flex items-center justify-center gap-2 text-red-500 font-medium py-2 hover:bg-red-50 rounded-small transition-colors">
           <LogOut size={18} />
           <span>Sair da conta</span>
         </button>

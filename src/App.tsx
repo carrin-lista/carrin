@@ -9,6 +9,55 @@ import { InviteView } from './features/invite/InviteView';
 import { Splash } from './components/Splash';
 import { TutorialSpotlight } from './components/TutorialSpotlight';
 
+// Componente Visual da Página de Manutenção Oficial
+function MaintenancePage({ message, onRetry }: { message: string, onRetry: () => void }) {
+  const [retrying, setRetrying] = useState(false);
+
+  const handleRetry = async () => {
+    setRetrying(true);
+    await onRetry();
+    setRetrying(false);
+  };
+
+  return (
+    <div className="w-full min-h-screen bg-carrin-bg flex flex-col items-center justify-center p-6">
+      <div className="bg-white max-w-sm w-full p-8 rounded-3xl shadow-sm text-center space-y-6 border border-gray-100">
+        <div className="w-16 h-16 bg-amber-50 rounded-2xl flex items-center justify-center mx-auto mb-2 border border-amber-100">
+          <svg className="w-8 h-8 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+        </div>
+        
+        <div>
+          <h1 className="text-xl font-black text-gray-800 tracking-tight">Estamos fazendo alguns ajustes.</h1>
+          <p className="text-sm text-gray-500 mt-3 leading-relaxed">
+            {message || 'O Carrin está temporariamente indisponível enquanto realizamos uma manutenção.'}
+          </p>
+          <p className="text-sm text-gray-500 mt-2">
+            Seus dados continuam seguros. Tente novamente em alguns minutos.
+          </p>
+        </div>
+
+        <button 
+          onClick={handleRetry}
+          disabled={retrying}
+          className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-4 rounded-2xl font-bold text-sm transition-colors flex justify-center items-center gap-2 disabled:opacity-70 mt-4"
+        >
+          {retrying ? (
+            <>
+              <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+              <span>Verificando...</span>
+            </>
+          ) : (
+            'Tentar novamente'
+          )}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const { user, setUser, homeId, setHomeId, isRecoveringPassword, setIsRecoveringPassword } = useAuthStore();
   
@@ -17,14 +66,58 @@ function App() {
   const [pendingDirectInviteId, setPendingDirectInviteId] = useState<string | null>(null);
   const [fadeIn, setFadeIn] = useState(false);
 
+  // Estados de Manutenção Global
+  const [isMaintenanceMode, setIsMaintenanceMode] = useState(false);
+  const [maintenanceMessage, setMaintenanceMessage] = useState('');
+  const [isCheckingMaintenance, setIsCheckingMaintenance] = useState(true);
+
   const pathname = window.location.pathname;
   const isInviteRoute = pathname.startsWith('/invite/');
   const inviteId = isInviteRoute ? pathname.split('/invite/')[1] : null;
+
+  // 1. Função isolada para verificar o modo manutenção sem cache de Service Worker
+  const checkMaintenanceStatus = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('global_settings')
+        .select('*')
+        .in('key', ['app_maintenance_mode', 'app_maintenance_message']);
+        
+      if (error) throw error;
+      
+      const maintenanceSetting = data?.find(s => s.key === 'app_maintenance_mode');
+      const messageSetting = data?.find(s => s.key === 'app_maintenance_message');
+      
+      // O banco armazena como jsonb, então garantimos a comparação estrita
+      const isMaintenance = maintenanceSetting?.value === true || maintenanceSetting?.value === "true";
+      
+      setIsMaintenanceMode(isMaintenance);
+      setMaintenanceMessage(messageSetting?.value || 'Estamos atualizando o Carrin. Voltamos logo.');
+      
+      return isMaintenance;
+    } catch (error) {
+      console.error('Falha ao checar modo manutenção:', error);
+      // Se falhar a conexão (ex: offline), não forçamos a tela de manutenção.
+      // O app tentará funcionar ou falhará naturalmente (exibindo erros de rede nas operações).
+      return isMaintenanceMode; // Mantém o último estado conhecido
+    } finally {
+      setIsCheckingMaintenance(false);
+    }
+  };
 
   useEffect(() => {
     let mounted = true;
 
     async function initializeApp() {
+      // Verifica manutenção primeiro antes de carregar o resto do app pesado
+      const inMaintenance = await checkMaintenanceStatus();
+      
+      if (inMaintenance && mounted) {
+        setIsInitializing(false);
+        requestAnimationFrame(() => setFadeIn(true));
+        return; // Interrompe o flow se estiver em manutenção
+      }
+
       try {
         const { data: { session } } = await supabase.auth.getSession();
         const currentUser = session?.user ?? null;
@@ -56,7 +149,28 @@ function App() {
 
     initializeApp();
 
+    // 2. Assinatura do Realtime para atualização em tempo real
+    const channel = supabase.channel('global-settings-changes')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'global_settings' },
+        (payload) => {
+          // Se a linha alterada for a chave de manutenção
+          if (payload.new && (payload.new as any).key === 'app_maintenance_mode') {
+             const newValue = (payload.new as any).value === true || (payload.new as any).value === "true";
+             setIsMaintenanceMode(newValue);
+          }
+          if (payload.new && (payload.new as any).key === 'app_maintenance_message') {
+            setMaintenanceMessage((payload.new as any).value);
+         }
+        }
+      )
+      .subscribe();
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      // Ignora eventos de auth se o app estiver bloqueado
+      if (isMaintenanceMode) return;
+
       const currentUser = session?.user ?? null;
       
       if (event === 'PASSWORD_RECOVERY') {
@@ -73,7 +187,6 @@ function App() {
         window.history.replaceState({ appState: 'auth' }, '', '/');
       } 
       else if (event === 'SIGNED_IN' && currentUser) {
-         // CORREÇÃO PWA: Bloqueia unmounts acidentais ao trocar de aba se a sessão já estiver ativa
          const currentState = useAuthStore.getState();
          if (currentState.user?.id === currentUser.id && currentState.homeId !== undefined) {
              return; 
@@ -108,11 +221,25 @@ function App() {
       mounted = false;
       subscription.unsubscribe();
       window.removeEventListener('popstate', handlePopState);
+      supabase.removeChannel(channel);
     };
-  }, [isInviteRoute, setHomeId, setUser, setIsRecoveringPassword, isInitializing]);
+  }, [isInviteRoute, setHomeId, setUser, setIsRecoveringPassword, isInitializing, isMaintenanceMode]);
 
-  if (isInitializing || isCheckingHome) return <Splash />;
+  // Bloqueador Global: Se estiver checando estado ou app carregando, mostra Splash
+  if (isCheckingMaintenance || isInitializing || isCheckingHome) {
+    return <Splash />;
+  }
 
+  // Interceptador Global: App em manutenção oficial
+  if (isMaintenanceMode) {
+    return (
+      <div className={`w-full min-h-screen bg-carrin-bg transition-opacity duration-500 ease-in-out ${fadeIn ? 'opacity-100' : 'opacity-0'}`}>
+        <MaintenancePage message={maintenanceMessage} onRetry={checkMaintenanceStatus} />
+      </div>
+    );
+  }
+
+  // Se passou pelos checks, renderiza o app normalmente
   const renderContent = () => {
     if (isRecoveringPassword) {
       return <Auth />;

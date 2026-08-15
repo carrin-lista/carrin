@@ -49,9 +49,8 @@ export const notificationService = {
         return;
       }
 
-      // 3. Registra/Recupera o Service Worker
-      const registration = await navigator.serviceWorker.register('/sw.js');
-      await navigator.serviceWorker.ready;
+      // 3. Aguarda o Service Worker oficial ficar pronto (removido o registro manual)
+      const registration = await navigator.serviceWorker.ready;
 
       // 4. Verifica se já existe uma inscrição ativa
       let subscription = await registration.pushManager.getSubscription();
@@ -66,7 +65,7 @@ export const notificationService = {
 
       // 6. Extrai as chaves criptográficas geradas pelo navegador
       const p256dh = btoa(String.fromCharCode(...new Uint8Array(subscription.getKey('p256dh') as ArrayBuffer)));
-const auth = btoa(String.fromCharCode(...new Uint8Array(subscription.getKey('auth') as ArrayBuffer)));
+      const auth = btoa(String.fromCharCode(...new Uint8Array(subscription.getKey('auth') as ArrayBuffer)));
 
       // 7. Limpa inscrições antigas com o mesmo endpoint para evitar duplicação e salva a nova
       await supabase.from('push_subscriptions').delete().eq('endpoint', subscription.endpoint);

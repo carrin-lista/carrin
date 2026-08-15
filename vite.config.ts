@@ -7,6 +7,10 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
+      injectRegister: null, // Desativa o registro genérico para usarmos o virtual:pwa-register manual no app
+      workbox: {
+        importScripts: ['/push-sw.js'] // Incorpora os listeners de push no SW oficial gerado
+      },
       devOptions: {
         enabled: true // Permite testar o PWA rodando localmente
       },
@@ -14,8 +18,8 @@ export default defineConfig({
         name: 'Carrin',
         short_name: 'Carrin',
         description: 'Lista de compras inteligente para casais.',
-        theme_color: '#23CE6B', // Alinhado com o Design System (Verde Carrin)[cite: 10]
-        background_color: '#F6F8FF', // Alinhado com o Design System (Carrin Background)[cite: 10]
+        theme_color: '#23CE6B', // Alinhado com o Design System (Verde Carrin)
+        background_color: '#F6F8FF', // Alinhado com o Design System (Carrin Background)
         display: 'standalone', // Faz abrir em tela cheia, sem barra de navegador
         icons: [
           {

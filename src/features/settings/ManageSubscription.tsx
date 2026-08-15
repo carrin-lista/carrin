@@ -4,10 +4,10 @@ import { ChevronLeft, CreditCard, AlertTriangle, XCircle, Check, AlertCircle } f
 
 interface ManageSubscriptionProps {
   onBack: () => void;
-  billingState: any;
+  commercialContext: any;
 }
 
-export function ManageSubscription({ onBack, billingState }: ManageSubscriptionProps) {
+export function ManageSubscription({ onBack, commercialContext }: ManageSubscriptionProps) {
   const { user, homeId } = useAuthStore();
   
   const [loading, setLoading] = useState(false);
@@ -87,7 +87,7 @@ export function ManageSubscription({ onBack, billingState }: ManageSubscriptionP
 
       <div className="bg-white rounded-card p-5 shadow-sm space-y-5 border border-gray-100">
         <div className="flex items-center gap-2 text-carrin-dark font-semibold pb-2 border-b border-gray-50">
-          <CreditCard size={18} className={billingState?.status === 'ACTIVE' ? 'text-emerald-600' : 'text-amber-500'} />
+          <CreditCard size={18} className={commercialContext?.can_write ? 'text-emerald-600' : 'text-amber-500'} />
           <span>Status do Plano</span>
         </div>
 
@@ -95,30 +95,24 @@ export function ManageSubscription({ onBack, billingState }: ManageSubscriptionP
           <div className="flex justify-between items-center">
             <span className="text-xs text-gray-500 font-medium">Situação Atual</span>
             <span className={`text-xs font-bold px-2.5 py-1 rounded-small ${
-              billingState?.status === 'ACTIVE' ? 'bg-emerald-100 text-emerald-700' :
-              billingState?.status === 'PAST_DUE' ? 'bg-red-100 text-red-700' :
-              billingState?.status === 'PAYMENT_REVIEW' ? 'bg-blue-100 text-blue-700' :
-              'bg-gray-100 text-gray-700'
+              commercialContext?.can_write ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
             }`}>
-              {billingState?.status === 'ACTIVE' ? 'Ativa' :
-               billingState?.status === 'PAST_DUE' ? 'Pagamento Atrasado' :
-               billingState?.status === 'PAYMENT_REVIEW' ? 'Em Análise' :
-               billingState?.status === 'CANCELLED' ? 'Cancelada' : billingState?.status}
+              {commercialContext?.can_write ? 'Acesso Liberado' : 'Acesso Suspenso'}
             </span>
           </div>
 
           <div className="flex justify-between items-center">
             <span className="text-xs text-gray-500 font-medium">Limite de Moradores</span>
-            <span className="text-sm font-bold text-carrin-dark">{billingState?.effective_limit || 5} pessoas</span>
+            <span className="text-sm font-bold text-carrin-dark">{commercialContext?.effective_limit || 5} pessoas</span>
           </div>
 
           <div className="flex justify-between items-center">
             <span className="text-xs text-gray-500 font-medium">Fim do Ciclo Atual</span>
-            <span className="text-sm font-bold text-carrin-dark">{formatDate(billingState?.current_period_end)}</span>
+            <span className="text-sm font-bold text-carrin-dark">{formatDate(commercialContext?.current_period_end)}</span>
           </div>
         </div>
 
-        {billingState?.status === 'PAST_DUE' && (
+        {commercialContext?.status === 'PAST_DUE' && (
           <div className="bg-red-50 text-red-700 p-3 rounded-small text-xs flex gap-2 font-medium">
             <AlertTriangle size={16} className="shrink-0" />
             <span>Identificamos um atraso no pagamento. Seu acesso poderá ser restrito em breve. Regularize a situação para evitar a perda de acesso dos moradores.</span>
@@ -126,7 +120,7 @@ export function ManageSubscription({ onBack, billingState }: ManageSubscriptionP
         )}
       </div>
 
-      {billingState?.status !== 'CANCELLED' && (
+      {commercialContext?.status !== 'CANCELLED' && (
         <div className="bg-white rounded-card p-5 shadow-sm space-y-4 border border-red-50 mt-8">
           <div className="flex items-center gap-2 text-red-600 font-semibold pb-2 border-b border-gray-50">
             <XCircle size={18} />

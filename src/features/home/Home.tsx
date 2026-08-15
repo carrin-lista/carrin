@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { homeService } from '../../services/homeService';
+import { supabase } from '../../services/supabase';
 import { 
   Users, Home as HomeIcon, Shield, UserPlus, Copy, Check, 
   Clock, Edit3, Save, User, Search, Send, Calendar, Trash2, 
@@ -109,6 +110,7 @@ export function Home() {
   const [pendingInvites, setPendingInvites] = useState<any[]>([]);
   const [currentUserRole, setCurrentUserRole] = useState<string>('member');
   const [loading, setLoading] = useState(true);
+  const [commercialContext, setCommercialContext] = useState<any>(null);
   
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
@@ -167,6 +169,10 @@ export function Home() {
       setHomeData(details.home);
       setNewName(details.home?.name || '');
       setMembers(details.members);
+
+      // Carrega o contexto comercial do banco
+      const { data } = await supabase.rpc('get_commercial_context', { p_home_id: homeId });
+      if (data) setCommercialContext(data);
 
       const currentMember = details.members.find((m: any) => m.users?.id === user.id || m.user_id === user.id);
       if (currentMember) {
@@ -506,7 +512,9 @@ export function Home() {
                 </div>
               )}
               <div className="flex items-center gap-2 mt-1">
-                <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full">Ativa</span>
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${commercialContext?.can_write ? 'bg-emerald-100 text-emerald-800' : 'bg-red-100 text-red-800'}`}>
+                  {commercialContext?.can_write ? 'Ativa' : 'Suspensa'}
+                </span>
                 <span className="text-xs text-gray-400 flex items-center gap-1">
                   <Calendar size={12} /> Criada em {new Date(homeData?.created_at || Date.now()).toLocaleDateString('pt-BR')}
                 </span>

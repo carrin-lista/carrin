@@ -11,10 +11,10 @@ export type NotificationItem = {
   created_at: string;
 }
 
-// Chave pública VAPID (Precisaremos gerar uma real)
-const VAPID_PUBLIC_KEY = 'BJAd8eyX7bk3yl5_R5tdWLTxLWtYXRwjW59Og7uf-a0fnWpPo05tVt1_FMSFhlW64KlcOMa0kgnVIt3ruRt_xKU';
+// Lendo a chave do .env (Garante única fonte de verdade e segurança)[cite: 5]
+const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY;
 
-// Função utilitária exigida pelo PushManager para converter a chave VAPID
+// Helper para converter VAPID
 function urlBase64ToUint8Array(base64String: string) {
   const padding = '='.repeat((4 - base64String.length % 4) % 4);
   const base64 = (base64String + padding)
@@ -30,32 +30,59 @@ function urlBase64ToUint8Array(base64String: string) {
   return outputArray;
 }
 
+// Helper para validar a chave da inscrição atual[cite: 5]
+function isSubscriptionUsingCurrentVapidKey(subscription: PushSubscription, currentVapidBase64: string): boolean {
+  if (!subscription.options.applicationServerKey) return false;
+  
+  const currentKeyArray = urlBase64ToUint8Array(currentVapidBase64);
+  const subKeyArray = new Uint8Array(subscription.options.applicationServerKey);
+  
+  if (currentKeyArray.length !== subKeyArray.length) return false;
+  
+  for (let i = 0; i < currentKeyArray.length; i++) {
+    if (currentKeyArray[i] !== subKeyArray[i]) return false;
+  }
+  
+  return true;
+}
+
 export const notificationService = {
   
   // --- LÓGICA DE WEB PUSH NOTIFICATIONS ---
 
-  async subscribeToPushNotifications(userId: string) {
-    // 1. Verifica se o navegador suporta Web Push e Service Workers
+  async subscribeToPushNotifications() {
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
       console.warn('Push messaging não é suportado neste navegador.');
       return;
     }
 
+    if (!VAPID_PUBLIC_KEY) {
+      console.error('VITE_VAPID_PUBLIC_KEY não está configurada no .env');
+      return;
+    }
+
     try {
-      // 2. Pede permissão ao usuário
       const permission = await Notification.requestPermission();
       if (permission !== 'granted') {
         console.warn('Permissão para notificações foi negada pelo usuário.');
         return;
       }
 
-      // 3. Aguarda o Service Worker oficial ficar pronto (removido o registro manual)
+      // Consome o Service Worker oficial gerenciado pelo pwa.ts[cite: 5]
       const registration = await navigator.serviceWorker.ready;
 
-      // 4. Verifica se já existe uma inscrição ativa
       let subscription = await registration.pushManager.getSubscription();
 
-      // 5. Cria uma nova inscrição caso não exista
+      // Verifica se a subscription existente pertence a uma VAPID antiga[cite: 5]
+      if (subscription) {
+        const isValid = isSubscriptionUsingCurrentVapidKey(subscription, VAPID_PUBLIC_KEY);
+        if (!isValid) {
+          console.warn('Subscription antiga detectada (VAPID divergente). Recriando...');
+          await subscription.unsubscribe();
+          subscription = null; // Força a criação de uma nova abaixo
+        }
+      }
+
       if (!subscription) {
         subscription = await registration.pushManager.subscribe({
           userVisibleOnly: true,
@@ -63,24 +90,26 @@ export const notificationService = {
         });
       }
 
-      // 6. Extrai as chaves criptográficas geradas pelo navegador
-      const p256dh = btoa(String.fromCharCode(...new Uint8Array(subscription.getKey('p256dh') as ArrayBuffer)));
-      const auth = btoa(String.fromCharCode(...new Uint8Array(subscription.getKey('auth') as ArrayBuffer)));
+      // Usa o toJSON exigido para evitar quebra de chaves em navegadores diferentes[cite: 5]
+      const subscriptionJSON = subscription.toJSON();
 
-      // 7. Limpa inscrições antigas com o mesmo endpoint para evitar duplicação e salva a nova
-      await supabase.from('push_subscriptions').delete().eq('endpoint', subscription.endpoint);
-      
-      const { error } = await supabase.from('push_subscriptions').insert({
-        user_id: userId,
-        endpoint: subscription.endpoint,
-        p256dh: p256dh,
-        auth: auth
+      if (!subscriptionJSON.endpoint || !subscriptionJSON.keys?.p256dh || !subscriptionJSON.keys?.auth) {
+        throw new Error('PushSubscription inválida ou incompleta.');
+      }
+
+      // Invoca a Edge Function para o backend decidir o ownership baseado no JWT do usuário[cite: 5]
+      const { data, error } = await supabase.functions.invoke('register-push-subscription', {
+        body: {
+          endpoint: subscriptionJSON.endpoint,
+          p256dh: subscriptionJSON.keys.p256dh,
+          auth: subscriptionJSON.keys.auth
+        }
       });
 
-      if (error) {
-        console.error('Erro ao salvar a inscrição no banco:', error);
+      if (error || !data?.success) {
+        console.error('Erro ao registrar subscription no backend:', error || data?.error);
       } else {
-        console.log('Inscrição Web Push salva com sucesso no Supabase!');
+        console.log('Inscrição Web Push salva com sucesso! Ação:', data.action);
       }
 
     } catch (error) {

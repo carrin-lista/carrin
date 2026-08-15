@@ -16,6 +16,7 @@ import { PushPermissionModal } from './PushPermissionModal';
 import { notificationService } from '../../services/notificationService';
 import { preferenceService } from '../../services/preferenceService';
 import { useTutorialStore } from '../../stores/useTutorialStore';
+import { interpretBillingState } from '../../services/billingInterpreter';
 
 const EMPTY_MESSAGES = [
   "Quando algo acabar em casa, coloque aqui.",
@@ -79,6 +80,7 @@ export function ShoppingList() {
   const [undoDelete, setUndoDelete] = useState<{ item: any, timerId: ReturnType<typeof setTimeout> } | null>(null);
   const [undoClear, setUndoClear] = useState<{ items: any[], timerId: ReturnType<typeof setTimeout> } | null>(null);
 
+  const [commercialContext, setCommercialContext] = useState<any>(null);
   const [canWrite, setCanWrite] = useState(true);
   const [userRole, setUserRole] = useState<string | null>(null);
 
@@ -131,28 +133,14 @@ export function ShoppingList() {
     localStorage.setItem('carrin_current_tab', currentTab);
   }, [currentTab]);
 
-  // NOVO: Função centralizada para validar o bloqueio visual
+  // FONTE ÚNICA DE VERDADE COMERCIAL
   const checkAccess = useCallback(async () => {
     if (!homeId || !user) return;
     try {
-      const { data, error } = await supabase.rpc('home_has_write_access', { p_home_id: homeId });
-      if (!error && typeof data === 'boolean') {
-        setCanWrite(data);
-      } else {
-        const { data: commercialRes } = await supabase.from('house_commercial_states').select('*').eq('home_id', homeId).single();
-        if (commercialRes) {
-          const { status, trial_ends_at, current_period_end, grace_period_ends_at } = commercialRes;
-          const now = new Date().getTime();
-          let hasAccess = true;
-          if (status === 'TRIAL') hasAccess = trial_ends_at ? new Date(trial_ends_at).getTime() >= now : false;
-          else if (status === 'ACTIVE') hasAccess = current_period_end ? new Date(current_period_end).getTime() >= now : false;
-          else if (status === 'PAST_DUE') hasAccess = grace_period_ends_at ? new Date(grace_period_ends_at).getTime() >= now : false;
-          else if (status === 'CANCELLED') hasAccess = current_period_end ? new Date(current_period_end).getTime() >= now : false;
-          else if (status === 'INACTIVE') hasAccess = false;
-          else if (status === 'INTERNAL') hasAccess = true;
-          else if (status === 'LEGACY') hasAccess = new Date('2026-09-14T23:59:59-03:00').getTime() >= now;
-          setCanWrite(hasAccess);
-        }
+      const { data, error } = await supabase.rpc('get_commercial_context', { p_home_id: homeId });
+      if (!error && data) {
+        setCommercialContext(data);
+        setCanWrite(data.can_write);
       }
     } catch (e) {
       console.error("Erro ao checar acesso:", e);
@@ -194,7 +182,7 @@ export function ShoppingList() {
     return () => { supabase.removeChannel(channel); };
   }, [homeId, fetchItems, user, checkAccess]);
 
-  // NOVO: Ouvinte em Tempo Real para travar o botão na hora que o banco mudar!
+  // Ouvinte em Tempo Real para o Status Comercial
   useEffect(() => {
     if (!homeId) return;
     const channel = supabase
@@ -238,7 +226,7 @@ export function ShoppingList() {
     localStorage.setItem('carrin_push_prompt_seen', 'true');
     setShowPushPrompt(false);
     setPushPromptResolved(true);
-    if (user) await notificationService.subscribeToPushNotifications(user.id);
+    if (user) await notificationService.subscribeToPushNotifications();
   };
 
   const handleDeclinePush = () => {
@@ -563,6 +551,8 @@ export function ShoppingList() {
     );
   };
 
+  const billingUI = interpretBillingState(commercialContext, userRole);
+
   return (
     <div className="w-full min-h-screen bg-carrin-bg relative overflow-x-hidden">
       {toastMsg && (
@@ -694,10 +684,12 @@ export function ShoppingList() {
               <div className="bg-white p-4 rounded-card shadow-[0_-10px_40px_-15px_rgba(0,0,0,0.1)] border border-red-200 pointer-events-auto flex flex-col items-center text-center gap-2 animate-in slide-in-from-bottom-4 mb-2">
                 <div className="flex items-center gap-2 text-red-500 font-bold"><AlertCircle size={20} /><span>Acesso Suspenso</span></div>
                 <p className="text-xs text-gray-500 font-medium leading-relaxed">
-                  {userRole === 'owner' ? 'O período de uso da sua Casa expirou. Regularize sua assinatura para voltar a adicionar itens na lista.' : 'O plano da sua Casa expirou. Peça ao Dono para regularizar a assinatura.'}
+                  {billingUI.blockMessage}
                 </p>
                 {userRole === 'owner' && (
-                  <button onClick={() => setCurrentTab('settings')} className="w-full mt-2 bg-red-50 text-red-600 py-3 rounded-small font-bold text-sm hover:bg-red-100 transition-colors">Renovar Assinatura</button>
+                  <button onClick={() => setCurrentTab('settings')} className="w-full mt-2 bg-red-50 text-red-600 py-3 rounded-small font-bold text-sm hover:bg-red-100 transition-colors">
+                    {billingUI.ctaText || 'Regularizar Assinatura'}
+                  </button>
                 )}
               </div>
             )}

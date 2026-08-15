@@ -8,6 +8,7 @@ import { notificationService } from '../../services/notificationService';
 import { useTutorialStore } from '../../stores/useTutorialStore';
 import { Checkout } from './Checkout'; 
 import { ManageSubscription } from './ManageSubscription'; 
+import { interpretBillingState } from '../../services/billingInterpreter';
 
 export function Settings() {
   const { user, homeId } = useAuthStore();
@@ -15,7 +16,7 @@ export function Settings() {
   
   const [loading, setLoading] = useState(true);
   const [userProfile, setUserProfile] = useState<any>(null);
-  const [billingState, setBillingState] = useState<any>(null);
+  const [commercialContext, setCommercialContext] = useState<any>(null);
   const [userRole, setUserRole] = useState<string | null>(null);
 
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
@@ -63,10 +64,10 @@ export function Settings() {
         if (homeId) {
           const [memberRes, commercialRes] = await Promise.all([
             supabase.from('home_members').select('role').eq('home_id', homeId).eq('user_id', user.id).single(),
-            supabase.from('house_commercial_states').select('*').eq('home_id', homeId).single()
+            supabase.rpc('get_commercial_context', { p_home_id: homeId })
           ]);
           if (memberRes.data) setUserRole(memberRes.data.role);
-          if (commercialRes.data) setBillingState(commercialRes.data);
+          if (commercialRes.data) setCommercialContext(commercialRes.data);
         }
       } catch (error) {
         console.error("Erro ao carregar dados:", error);
@@ -85,8 +86,10 @@ export function Settings() {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'house_commercial_states', filter: `home_id=eq.${homeId}` },
-        (payload) => {
-          setBillingState(payload.new);
+        async () => {
+          // Sempre recalcula pela autoridade principal via RPC
+          const { data } = await supabase.rpc('get_commercial_context', { p_home_id: homeId });
+          if (data) setCommercialContext(data);
         }
       ).subscribe();
     return () => { supabase.removeChannel(channel); };
@@ -171,60 +174,10 @@ export function Settings() {
     window.location.href = '/';
   };
 
-  // CÓPIA CORRIGIDA E CONCEITUALMENTE ALINHADA (Sem confundir preço de plano com assinatura ativa)
-  const getBillingSubtitle = () => {
-    if (loading) return { text: 'Carregando...', color: 'text-gray-500' };
-    if (!billingState) return { text: 'Verificando assinatura...', color: 'text-gray-500' };
-    if (userRole !== 'owner') return { text: 'Gerenciada pelo Dono da Casa', color: 'text-gray-500' };
-
-    const { status, trial_ends_at, current_period_end } = billingState;
-    const now = new Date().getTime();
-
-    switch (status) {
-      case 'TRIAL': {
-        if (trial_ends_at) {
-          const days = Math.ceil((new Date(trial_ends_at).getTime() - now) / (1000 * 3600 * 24));
-          if (days <= 0) {
-            return { text: 'Período gratuito encerrado', color: 'text-red-500 font-bold' };
-          }
-          return { text: `Período gratuito • ${Math.max(0, days)} dias restantes`, color: 'text-blue-500' };
-        }
-        return { text: 'Período gratuito', color: 'text-blue-500' };
-      }
-      case 'ACTIVE':
-        return { text: 'Ativa • R$ 19/mês', color: 'text-emerald-600 font-bold' };
-      case 'PAST_DUE':
-        return { text: 'Pagamento pendente', color: 'text-red-500 font-bold' };
-      case 'CANCELLED': {
-        const hasAccess = current_period_end ? new Date(current_period_end).getTime() >= now : false;
-        if (hasAccess && current_period_end) {
-          const date = new Date(current_period_end).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-          return { text: `Cancelada • acesso até ${date}`, color: 'text-amber-500 font-bold' };
-        }
-        return { text: 'Assinatura inativa', color: 'text-red-500 font-bold' };
-      }
-      case 'LEGACY': {
-        const isExpired = current_period_end ? new Date(current_period_end).getTime() < now : false;
-        if (isExpired) {
-          return { text: 'Período de transição encerrado', color: 'text-red-500 font-bold' };
-        }
-        return { text: 'Casa pré-monetização', color: 'text-gray-500' };
-      }
-      case 'INTERNAL':
-        return { text: 'Casa Interna (Gratuita)', color: 'text-emerald-600 font-bold' };
-      case 'INACTIVE':
-        return { text: 'Sem assinatura • R$ 19/mês', color: 'text-gray-500' };
-      case 'PAYMENT_REVIEW':
-        return { text: 'Pagamento em análise', color: 'text-blue-500 font-bold' };
-      default:
-        return { text: 'Sem assinatura • R$ 19/mês', color: 'text-gray-500' };
-    }
-  };
+  const billingUI = interpretBillingState(commercialContext, userRole);
 
   if (showCheckout) return <Checkout onBack={() => setShowCheckout(false)} />;
-  if (showManage) return <ManageSubscription onBack={() => setShowManage(false)} billingState={billingState} />;
-
-  const billingUI = getBillingSubtitle();
+  if (showManage) return <ManageSubscription onBack={() => setShowManage(false)} commercialContext={commercialContext} />;
 
   return (
     <div className="min-h-screen bg-carrin-bg p-6 pb-32 max-w-lg mx-auto space-y-6 relative">
@@ -325,7 +278,7 @@ export function Settings() {
 
       {/* CARD DE ASSINATURA */}
       {homeId && (
-        <div className={`bg-white rounded-card p-5 shadow-sm space-y-4 border ${billingState?.status === 'INACTIVE' ? 'border-red-200' : 'border-gray-100'}`}>
+        <div className={`bg-white rounded-card p-5 shadow-sm space-y-4 border ${!commercialContext?.can_write ? 'border-red-200' : 'border-gray-100'}`}>
           <div className="flex items-center gap-2 text-carrin-dark font-semibold pb-2 border-b border-gray-50">
             <CreditCard size={20} className="text-carrin-primary" />
             <span>Assinatura</span>
@@ -335,7 +288,7 @@ export function Settings() {
             onClick={() => {
               if (userRole === 'owner') {
                 const activeStatuses = ['ACTIVE', 'PAST_DUE', 'PAYMENT_REVIEW', 'CANCELLED'];
-                if (billingState && activeStatuses.includes(billingState.status)) { setShowManage(true); } 
+                if (commercialContext && activeStatuses.includes(commercialContext.status)) { setShowManage(true); } 
                 else { setShowCheckout(true); }
               }
             }}
@@ -343,7 +296,7 @@ export function Settings() {
           >
             <div>
               <p className="text-sm font-bold text-carrin-dark">Assinatura da Casa</p>
-              <p className={`text-xs mt-0.5 ${billingUI.color}`}>{billingUI.text}</p>
+              <p className={`text-xs mt-0.5 ${billingUI.badgeColorClass}`}>{billingUI.statusLabel} • {billingUI.subtitleLabel}</p>
             </div>
             {userRole === 'owner' && <ChevronRight size={18} className="text-gray-400" />}
           </div>
@@ -381,7 +334,7 @@ export function Settings() {
         </div>
 
         <div className="mt-6 pt-4 border-t border-gray-100">
-          <button onClick={async () => { if (!user) return; await notificationService.subscribeToPushNotifications(user.id); showFeedback('success', 'Aparelho conectado! Você receberá alertas.'); }} className="w-full bg-gray-50 border border-gray-200 text-carrin-dark py-3 rounded-small font-semibold text-sm hover:bg-gray-100 transition-colors flex justify-center items-center gap-2">
+          <button onClick={async () => { if (!user) return; await notificationService.subscribeToPushNotifications(); showFeedback('success', 'Aparelho conectado! Você receberá alertas.'); }} className="w-full bg-gray-50 border border-gray-200 text-carrin-dark py-3 rounded-small font-semibold text-sm hover:bg-gray-100 transition-colors flex justify-center items-center gap-2">
             <Bell size={16} className="text-emerald-600" />
             Ativar Alertas Neste Aparelho
           </button>

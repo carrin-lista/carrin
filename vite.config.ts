@@ -17,9 +17,9 @@ export default defineConfig({
       manifest: {
         name: 'Carrin',
         short_name: 'Carrin',
-        description: 'Lista de compras inteligente para casais.',
-        theme_color: '#23CE6B', // Alinhado com o Design System (Verde Carrin)
-        background_color: '#F6F8FF', // Alinhado com o Design System (Carrin Background)
+        description: 'Lista de Compras.',
+        theme_color: '#10b981', // Cor da barra superior do celular (mantém verde)
+        background_color: '#f8fafc', // MUDANÇA: Fundo clarinho para a tela de abertura
         display: 'standalone', // Faz abrir em tela cheia, sem barra de navegador
         icons: [
           {

@@ -21,16 +21,35 @@ function MaintenancePage({ message, onRetry }: { message: string, onRetry: () =>
 
   return (
     <div className="w-full min-h-screen bg-carrin-bg flex flex-col items-center justify-center p-6">
+      
+      {/* Estilo local isolado para a animação do reflexo */}
+      <style>
+        {`
+          @keyframes shine-sweep {
+            0% { transform: translateX(-150%) skewX(-20deg); }
+            15%, 100% { transform: translateX(300%) skewX(-20deg); }
+          }
+          .animate-shine {
+            animation: shine-sweep 6s ease-in-out infinite;
+          }
+        `}
+      </style>
+
       <div className="bg-white max-w-sm w-full p-8 rounded-3xl shadow-sm text-center space-y-6 border border-gray-100">
-        <div className="w-16 h-16 bg-amber-50 rounded-2xl flex items-center justify-center mx-auto mb-2 border border-amber-100">
-          <svg className="w-8 h-8 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-          </svg>
+        
+        {/* Ícone com Efeito de Shine (Reflexo mais lento e sem moldura) */}
+        <div className="w-20 h-20 mx-auto mb-2 flex items-center justify-center relative overflow-hidden rounded-3xl">
+          <img 
+            src="/main.png" 
+            alt="Carrin" 
+            className="w-full h-full object-contain relative z-10"
+          />
+          {/* Feixe de luz animado */}
+          <div className="absolute top-0 left-0 w-1/2 h-full bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shine z-20 pointer-events-none"></div>
         </div>
         
         <div>
-          <h1 className="text-xl font-black text-gray-800 tracking-tight">Estamos fazendo alguns ajustes.</h1>
+          <h1 className="text-xl font-black text-carrin-dark tracking-tight">Estamos fazendo alguns ajustes.</h1>
           <p className="text-sm text-gray-500 mt-3 leading-relaxed">
             {message || 'O Carrin está temporariamente indisponível enquanto realizamos uma manutenção.'}
           </p>
@@ -39,10 +58,11 @@ function MaintenancePage({ message, onRetry }: { message: string, onRetry: () =>
           </p>
         </div>
 
+        {/* Botão com a cor oficial da marca e hover correto */}
         <button 
           onClick={handleRetry}
           disabled={retrying}
-          className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-4 rounded-2xl font-bold text-sm transition-colors flex justify-center items-center gap-2 disabled:opacity-70 mt-4"
+          className="w-full bg-carrin-primary hover:opacity-90 text-white py-4 rounded-2xl font-bold text-sm transition-all flex justify-center items-center gap-2 disabled:opacity-70 mt-4 shadow-sm"
         >
           {retrying ? (
             <>

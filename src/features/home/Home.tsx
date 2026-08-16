@@ -214,18 +214,18 @@ export function Home() {
       if (!homeId || !event.target.files || event.target.files.length === 0) return;
       setUploadingPhoto(true);
       setShowPhotoMenu(false);
+      
       const file = event.target.files[0];
       
-      if (homeData?.photo_url) {
-        await homeService.deleteHomePhoto(homeId, homeData.photo_url);
-      }
-
-      const publicUrl = await homeService.uploadHomePhoto(homeId, file);
+      // Enviamos a URL antiga. O Service cuida do upload, do update no banco e só apaga a antiga se tudo der certo!
+      const publicUrl = await homeService.uploadHomePhoto(homeId, file, homeData?.photo_url);
+      
+      // Se não deu erro, a alteração foi confirmada no banco
       setHomeData({ ...homeData, photo_url: publicUrl });
       showFeedback('success', 'Foto da casa atualizada com sucesso!');
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
-      showFeedback('error', 'Erro ao atualizar foto. Verifique a conexão.');
+      showFeedback('error', error.message || 'Erro ao atualizar foto. Verifique a conexão.');
     } finally {
       setUploadingPhoto(false);
     }

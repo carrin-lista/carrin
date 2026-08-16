@@ -3,12 +3,14 @@ import { useAuthStore } from '../../stores/useAuthStore';
 import { preferenceService, type UserPreferences } from '../../services/preferenceService';
 import { userService } from '../../services/userService';
 import { supabase } from '../../services/supabase';
-import { LogOut, User, Bell, Edit3, Save, X, Check, AlertCircle, Camera, Trash2, CreditCard, ChevronRight } from 'lucide-react';
+import { User, Bell, Edit3, Save, X, Check, AlertCircle, Camera, Trash2, CreditCard, ChevronRight, MessageSquare, LogOut } from 'lucide-react';
 import { notificationService } from '../../services/notificationService';
 import { useTutorialStore } from '../../stores/useTutorialStore';
 import { Checkout } from './Checkout'; 
 import { ManageSubscription } from './ManageSubscription'; 
 import { interpretBillingState } from '../../services/billingInterpreter';
+import { Support } from './Support';
+import { OtherOptions } from './OtherOptions';
 
 export function Settings() {
   const { user, homeId } = useAuthStore();
@@ -30,8 +32,11 @@ export function Settings() {
   const [savingProfile, setSavingProfile] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  // Navegação Interna de Ajustes
   const [showCheckout, setShowCheckout] = useState(false);
   const [showManage, setShowManage] = useState(false);
+  const [showSupport, setShowSupport] = useState(false);
+  const [showOtherOptions, setShowOtherOptions] = useState(false);
 
   const [preferences, setPreferences] = useState<UserPreferences>({
     notify_home_updates: true,
@@ -78,7 +83,6 @@ export function Settings() {
     loadData();
   }, [user, homeId]);
 
-  // Ouvinte em Tempo Real para mudar status e cores instantaneamente
   useEffect(() => {
     if (!homeId) return;
     const channel = supabase
@@ -87,7 +91,6 @@ export function Settings() {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'house_commercial_states', filter: `home_id=eq.${homeId}` },
         async () => {
-          // Sempre recalcula pela autoridade principal via RPC
           const { data } = await supabase.rpc('get_commercial_context', { p_home_id: homeId });
           if (data) setCommercialContext(data);
         }
@@ -176,8 +179,11 @@ export function Settings() {
 
   const billingUI = interpretBillingState(commercialContext, userRole);
 
+  // Roteamento interno da tela de Ajustes
   if (showCheckout) return <Checkout onBack={() => setShowCheckout(false)} />;
   if (showManage) return <ManageSubscription onBack={() => setShowManage(false)} commercialContext={commercialContext} />;
+  if (showSupport) return <Support onBack={() => setShowSupport(false)} />;
+  if (showOtherOptions) return <OtherOptions onBack={() => setShowOtherOptions(false)} />;
 
   return (
     <div className="min-h-screen bg-carrin-bg p-6 pb-32 max-w-lg mx-auto space-y-6 relative">
@@ -191,7 +197,7 @@ export function Settings() {
 
       <div>
         <h1 className="text-2xl font-bold text-carrin-dark mb-1">Ajustes</h1>
-        <p className="text-gray-500 text-sm">Gerencie o seu perfil e preferências de notificação.</p>
+        <p className="text-gray-500 text-sm">Gerencie o seu perfil e preferências.</p>
       </div>
 
       <div ref={(el) => registerElement('settings-profile-area', el)} className="bg-white rounded-card p-5 shadow-sm space-y-4 border border-gray-100">
@@ -276,7 +282,7 @@ export function Settings() {
         )}
       </div>
 
-      {/* CARD DE ASSINATURA */}
+      {/* ASSINATURA */}
       {homeId && (
         <div className={`bg-white rounded-card p-5 shadow-sm space-y-4 border ${!commercialContext?.can_write ? 'border-red-200' : 'border-gray-100'}`}>
           <div className="flex items-center gap-2 text-carrin-dark font-semibold pb-2 border-b border-gray-50">
@@ -303,7 +309,8 @@ export function Settings() {
         </div>
       )}
 
-      <div ref={(el) => registerElement('settings-home-area', el)} className="bg-white rounded-card p-5 shadow-sm space-y-4 border border-gray-100">
+      {/* NOTIFICAÇÕES */}
+      <div className="bg-white rounded-card p-5 shadow-sm space-y-4 border border-gray-100">
         <div className="flex items-center gap-2 text-carrin-dark font-semibold pb-2 border-b border-gray-50">
           <Bell size={20} className="text-carrin-primary" />
           <span>Notificações</span>
@@ -338,16 +345,47 @@ export function Settings() {
             <Bell size={16} className="text-emerald-600" />
             Ativar Alertas Neste Aparelho
           </button>
-          <p className="text-center text-[10px] text-gray-400 mt-2">Você precisa ativar isso em cada celular que quiser receber avisos.</p>
         </div>
       </div>
 
-      <div className="bg-white rounded-card p-5 shadow-sm border border-gray-100">
-        <button onClick={handleLogout} className="w-full flex items-center justify-center gap-2 text-red-500 font-medium py-2 hover:bg-red-50 rounded-small transition-colors">
-          <LogOut size={18} />
-          <span>Sair da conta</span>
-        </button>
+      {/* AJUDA E SUPORTE */}
+      <div className="bg-white rounded-card p-5 shadow-sm space-y-4 border border-gray-100">
+        <div className="flex items-center gap-2 text-carrin-dark font-semibold pb-2 border-b border-gray-50">
+          <MessageSquare size={20} className="text-carrin-primary" />
+          <span>Ajuda e Suporte</span>
+        </div>
+        
+        <div 
+          onClick={() => setShowSupport(true)}
+          className="flex items-center justify-between cursor-pointer hover:opacity-80 transition-opacity"
+        >
+          <div>
+            <p className="text-sm font-bold text-carrin-dark">Fale com a equipe Carrin</p>
+            <p className="text-xs mt-0.5 text-gray-500">Tire dúvidas ou reporte problemas</p>
+          </div>
+          <ChevronRight size={18} className="text-gray-400" />
+        </div>
       </div>
+
+      {/* OUTRAS OPÇÕES E SAIR DA CONTA */}
+      <div className="bg-white rounded-card shadow-sm border border-gray-100 overflow-hidden">
+        <div 
+          onClick={() => setShowOtherOptions(true)}
+          className="flex items-center justify-between cursor-pointer hover:bg-gray-50 transition-colors p-4 border-b border-gray-50"
+        >
+          <span className="text-sm font-medium text-gray-600">Outras opções</span>
+          <ChevronRight size={18} className="text-gray-400" />
+        </div>
+        
+        <div 
+          onClick={handleLogout}
+          className="flex items-center justify-between cursor-pointer hover:bg-gray-50 transition-colors p-4"
+        >
+          <span className="text-sm font-medium text-gray-600">Sair da conta</span>
+          <LogOut size={16} className="text-gray-400" />
+        </div>
+      </div>
+
     </div>
   );
 }

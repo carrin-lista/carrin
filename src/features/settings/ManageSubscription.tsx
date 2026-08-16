@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useAuthStore } from '../../stores/useAuthStore';
-import { ChevronLeft, CreditCard, AlertTriangle, XCircle, Check, AlertCircle } from 'lucide-react';
+import { supabase } from '../../services/supabase';
+import { ChevronLeft, CreditCard, AlertTriangle, Check, AlertCircle, ChevronRight } from 'lucide-react';
 
 interface ManageSubscriptionProps {
   onBack: () => void;
@@ -25,10 +26,12 @@ export function ManageSubscription({ onBack, commercialContext }: ManageSubscrip
     setLoading(true);
     try {
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'SUA_URL_AQUI'; 
-      // Pega o token da sessão local
-      const token = localStorage.getItem('sb-' + import.meta.env.VITE_SUPABASE_PROJECT_ID + '-auth-token');
-      const sessionObj = token ? JSON.parse(token) : null;
-      const accessToken = sessionObj?.access_token;
+      
+      // SOLUÇÃO DO TOKEN: Pegamos a sessão diretamente do cliente oficial (À prova de falhas)
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError || !session) throw new Error("Sessão inválida. Faça login novamente.");
+      
+      const accessToken = session.access_token;
 
       const response = await fetch(`${supabaseUrl}/functions/v1/asaas-cancel`, {
         method: 'POST',
@@ -113,51 +116,50 @@ export function ManageSubscription({ onBack, commercialContext }: ManageSubscrip
         </div>
 
         {commercialContext?.status === 'PAST_DUE' && (
-          <div className="bg-red-50 text-red-700 p-3 rounded-small text-xs flex gap-2 font-medium">
-            <AlertTriangle size={16} className="shrink-0" />
-            <span>Identificamos um atraso no pagamento. Seu acesso poderá ser restrito em breve. Regularize a situação para evitar a perda de acesso dos moradores.</span>
+          <div className="bg-amber-50 text-amber-800 p-3 rounded-small text-xs flex gap-2 font-medium border border-amber-200">
+            <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+            <span>Identificamos um atraso no pagamento. Seu acesso poderá ser restrito. Regularize a situação ou cancele a assinatura abaixo para interromper a cobrança.</span>
           </div>
         )}
       </div>
 
+      {/* NOVA INTERFACE CLEAN PARA CANCELAMENTO */}
       {commercialContext?.status !== 'CANCELLED' && (
-        <div className="bg-white rounded-card p-5 shadow-sm space-y-4 border border-red-50 mt-8">
-          <div className="flex items-center gap-2 text-red-600 font-semibold pb-2 border-b border-gray-50">
-            <XCircle size={18} />
-            <span>Zona de Perigo</span>
-          </div>
-          
-          <p className="text-xs text-gray-500">Ao cancelar, sua assinatura atual continuará ativa até o final do período já pago. Após isso, a Casa retornará às restrições do plano gratuito.</p>
-
+        <div className="bg-white rounded-card shadow-sm border border-gray-100 overflow-hidden">
           {!showConfirmCancel ? (
-            <button
+            <div 
               onClick={() => setShowConfirmCancel(true)}
-              className="w-full bg-red-50 text-red-600 py-3 rounded-small font-bold text-xs hover:bg-red-100 transition-colors"
+              className="flex items-center justify-between cursor-pointer hover:bg-gray-50 transition-colors p-4"
             >
-              Cancelar minha assinatura
-            </button>
+              <span className="text-sm font-medium text-gray-600">Cancelar assinatura</span>
+              <ChevronRight size={18} className="text-gray-400" />
+            </div>
           ) : (
-            <div className="space-y-2 animate-in fade-in">
-              <p className="text-xs font-bold text-carrin-dark text-center mb-2">Tem certeza que deseja cancelar?</p>
-              <div className="flex gap-2">
+            <div className="p-5 space-y-4 animate-in fade-in zoom-in-95 duration-200">
+              <p className="text-sm text-gray-600 font-medium leading-relaxed">
+                Ao cancelar, sua assinatura continuará ativa até o final do período já pago. Após isso, a Casa retornará às restrições do plano gratuito.
+              </p>
+              
+              <div className="flex items-center gap-3 pt-3 border-t border-gray-50">
                 <button
                   onClick={() => setShowConfirmCancel(false)}
-                  className="flex-1 bg-gray-100 text-gray-600 py-3 rounded-small font-bold text-xs hover:bg-gray-200 transition-colors"
+                  className="flex-1 px-4 py-2.5 text-gray-500 hover:text-gray-700 hover:bg-gray-50 bg-white border border-gray-200 text-xs font-bold rounded-lg transition-colors"
                 >
-                  Não, manter plano
+                  Voltar
                 </button>
                 <button
                   onClick={handleCancelSubscription}
                   disabled={loading}
-                  className="flex-1 bg-red-600 text-white py-3 rounded-small font-bold text-xs hover:bg-red-700 transition-colors disabled:opacity-50"
+                  className="flex-1 px-4 py-2.5 bg-red-600 text-white text-xs font-bold rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
                 >
-                  {loading ? 'Cancelando...' : 'Sim, cancelar'}
+                  {loading ? 'Processando...' : 'Confirmar cancelamento'}
                 </button>
               </div>
             </div>
           )}
         </div>
       )}
+      
     </div>
   );
 }

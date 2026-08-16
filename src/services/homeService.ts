@@ -194,51 +194,77 @@ export const homeService = {
     if (error) throw error;
   },
 
-  // --- NOVAS FUNÇÕES PARA A FOTO DA CASA ---
-  async uploadHomePhoto(homeId: string, file: File): Promise<string> {
+  // --- FUNÇÕES REESCRITAS PARA FOTO DA CASA COM ROLLBACK ---
+  
+  async uploadHomePhoto(homeId: string, file: File, oldPhotoUrl?: string | null): Promise<string> {
     const fileExt = file.name.split('.').pop();
     const fileName = `${homeId}-${Math.random()}.${fileExt}`;
     const filePath = `homes/${fileName}`;
 
-    // Trocado de 'avatars' para 'profiles'
+    // 1. Faz o upload da nova foto para o Storage
     const { error: uploadError } = await supabase.storage
       .from('profiles')
       .upload(filePath, file);
 
     if (uploadError) throw uploadError;
 
-    // Trocado de 'avatars' para 'profiles'
+    // 2. Obtém a URL pública do novo arquivo
     const { data: { publicUrl } } = supabase.storage
       .from('profiles')
       .getPublicUrl(filePath);
 
-    await supabase
+    // 3. Tenta salvar a URL no banco (Aqui a RLS do Supabase fará o bloqueio se o usuário não for owner/admin)
+    const { error: updateError } = await supabase
       .from('homes')
       .update({ photo_url: publicUrl })
       .eq('id', homeId);
+
+    // 4. Se o banco rejeitar a mudança (falta de permissão), deletamos o arquivo órfão que subiu e abortamos
+    if (updateError) {
+      await supabase.storage.from('profiles').remove([filePath]);
+      throw new Error('Você não tem permissão para alterar a foto ou ocorreu um erro de sincronização.');
+    }
+
+    // 5. O UPDATE foi um sucesso! Agora podemos excluir a foto antiga com segurança
+    if (oldPhotoUrl) {
+      try {
+        const oldFilePath = oldPhotoUrl.split('/profiles/')[1];
+        if (oldFilePath) {
+          await supabase.storage.from('profiles').remove([oldFilePath]);
+        }
+      } catch (cleanupError) {
+        console.warn('Falha silenciosa ao remover foto antiga (órfã). A nova foto já está ativa:', cleanupError);
+      }
+    }
 
     return publicUrl;
   },
 
   async deleteHomePhoto(homeId: string, photoUrl: string) {
-    // Trocado de 'avatars' para 'profiles'
-    const filePath = photoUrl.split('/profiles/')[1]; 
-    
-    if (filePath) {
-      const { error: storageError } = await supabase.storage
-        .from('profiles') // Trocado de 'avatars' para 'profiles'
-        .remove([filePath]);
-      if (storageError) throw storageError;
-    }
-
+    // 1. Atualiza o banco primeiro (Fonte de verdade). Se o usuário não tiver permissão, aborta aqui.
     const { error: updateError } = await supabase
       .from('homes')
       .update({ photo_url: null })
       .eq('id', homeId);
 
-    if (updateError) throw updateError;
+    if (updateError) throw new Error('Você não tem permissão para remover a foto da Casa.');
+
+    // 2. Se o banco permitiu, tentamos excluir a foto física do Storage.
+    try {
+      const filePath = photoUrl.split('/profiles/')[1]; 
+      if (filePath) {
+        const { error: storageError } = await supabase.storage
+          .from('profiles')
+          .remove([filePath]);
+          
+        if (storageError) console.warn('Erro ao remover foto física do storage, arquivo órfão mantido:', storageError);
+      }
+    } catch (err) {
+      console.warn('Erro na estruturação da rota do storage:', err);
+    }
   },
-async transferOwnership(homeId: string, newOwnerId: string) {
+
+  async transferOwnership(homeId: string, newOwnerId: string) {
     const { error } = await supabase.rpc('transfer_home_ownership', {
       p_home_id: homeId,
       p_new_owner_id: newOwnerId
@@ -247,4 +273,3 @@ async transferOwnership(homeId: string, newOwnerId: string) {
     if (error) throw error;
   }
 };
-

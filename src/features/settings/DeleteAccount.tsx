@@ -44,14 +44,18 @@ export function DeleteAccount({ onClose }: DeleteAccountProps) {
       await supabase.auth.signOut();
       window.location.href = '/';
     } catch (error: any) {
-      console.error(error);
+      // LOG TURBINADO PARA DIAGNÓSTICO
+      console.error('🔍 [DELETE ACCOUNT ERROR] Detalhes completos:', error);
+      if (error.context) {
+        console.error('Contexto do erro:', error.context);
+      }
+      
       setErrorFeedback('Falha ao processar exclusão. Tente novamente mais tarde.');
       setDeleting(false);
     }
   };
 
   const renderBlockerAction = (code: string) => {
-    // Retorna um botão simples e coerente para fechar o modal e guiar o usuário
     switch (code) {
       case 'OWNER_HAS_MEMBERS': 
         return <button onClick={onClose} className="w-full sm:w-auto px-4 py-2.5 bg-gray-100 text-gray-700 text-xs font-bold rounded-lg hover:bg-gray-200 transition-colors">Entendi</button>;

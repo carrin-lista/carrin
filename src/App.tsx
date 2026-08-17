@@ -9,6 +9,9 @@ import { InviteView } from './features/invite/InviteView';
 import { Splash } from './components/Splash';
 import { TutorialSpotlight } from './components/TutorialSpotlight';
 
+// ---> NOVA IMPORTAÇÃO DO GERENCIADOR PWA AQUI:
+import { PwaPromptManager } from './components/pwa/PwaPromptManager';
+
 // Componente Visual da Página de Manutenção Oficial
 function MaintenancePage({ message, onRetry }: { message: string, onRetry: () => void }) {
   const [retrying, setRetrying] = useState(false);
@@ -181,8 +184,8 @@ function App() {
              setIsMaintenanceMode(newValue);
           }
           if (payload.new && (payload.new as any).key === 'app_maintenance_message') {
-            setMaintenanceMessage((payload.new as any).value);
-         }
+             setMaintenanceMessage((payload.new as any).value);
+          }
         }
       )
       .subscribe();
@@ -294,6 +297,10 @@ function App() {
     <div className={`w-full min-h-screen bg-carrin-bg transition-opacity duration-500 ease-in-out ${fadeIn ? 'opacity-100' : 'opacity-0'}`}>
       {renderContent()}
       <TutorialSpotlight />
+      
+      {/* O Gerenciador PWA fica oculto aguardando as regras */}
+      <PwaPromptManager />
+      
     </div>
   );
 }

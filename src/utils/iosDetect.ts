@@ -4,8 +4,10 @@ export function isIOSDevice(): boolean {
   if (typeof window === 'undefined') return false;
   const userAgent = window.navigator.userAgent.toLowerCase();
   const isIOS = /iphone|ipad|ipod/.test(userAgent);
-  // Garante que não é o simulador do iPadOS no Mac desktop
-  const isMacTouch = navigator.maxTouchPoints && navigator.maxTouchPoints > 2 && /macintosh/.test(userAgent);
+  
+  // Força o resultado para boolean usando Boolean()
+  const isMacTouch = Boolean(navigator.maxTouchPoints && navigator.maxTouchPoints > 2) && /macintosh/.test(userAgent);
+  
   return isIOS || isMacTouch;
 }
 

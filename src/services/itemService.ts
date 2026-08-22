@@ -92,7 +92,9 @@ export const itemService = {
         p_count: 1, 
         p_home_id: homeId, 
         p_item_name: itemName 
-      }).catch(console.error); 
+      }).then(({ error }) => {
+        if (error) console.error(error);
+      });
     }
   },
 
@@ -110,9 +112,11 @@ export const itemService = {
         p_count: itemCount, 
         p_home_id: homeId, 
         p_item_name: null 
-      }).catch(console.error);
+      }).then(({ error }) => {
+        if (error) console.error(error);
+      });
     }
-  },
+  }, // <--- ESSA CHAVE COM VÍRGULA SUMIU!
 
   async updateItem(itemId: string, updates: { name?: string; quantity?: number | null; unit?: string | null; observation?: string; category_id?: string }) {
     const { error } = await supabase

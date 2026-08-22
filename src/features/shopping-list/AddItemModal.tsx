@@ -6,7 +6,7 @@ import { analyzeItemInput } from '../../utils/categoryPredictor';
 import { preferenceService } from '../../services/preferenceService';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { itemService } from '../../services/itemService';
-import { useScrollLock } from '../../hooks/useScrollLock';
+
 
 export const CATEGORIES = [
   '🛒 Mantimentos', '🍎 Hortifrúti', '🥩 Açougue', '🥛 Laticínios',

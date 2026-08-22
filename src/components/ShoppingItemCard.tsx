@@ -136,7 +136,7 @@ export function ShoppingItemCard({
     swipeDirection.current = null;
   };
 
-  const handleClick = (e: React.MouseEvent) => {
+  const handleClick = () => {
     if (isSwipedLeft || isSwipedRight || showActionMenu || isMovingCategory || showDesktopMenu) {
       closeActions();
       return;

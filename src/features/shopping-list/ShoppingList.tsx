@@ -17,6 +17,7 @@ import { notificationService } from '../../services/notificationService';
 import { preferenceService } from '../../services/preferenceService';
 import { useTutorialStore } from '../../stores/useTutorialStore';
 import { interpretBillingState } from '../../services/billingInterpreter';
+import { useScrollLock } from '../../hooks/useScrollLock';
 
 const EMPTY_MESSAGES = [
   "Quando algo acabar em casa, coloque aqui.",
@@ -93,11 +94,8 @@ export function ShoppingList() {
 
   const isAnyModalOpen = !!(priceModalItem || itemToUncheck || showTutorial || isFinishModalOpen || isModalOpen || showPushPrompt || showClearConfirm);
 
-  useEffect(() => {
-    if (isAnyModalOpen) { document.body.style.overflow = 'hidden'; } 
-    else { document.body.style.overflow = 'unset'; }
-    return () => { document.body.style.overflow = 'unset'; };
-  }, [isAnyModalOpen]);
+  // NOVO: Chama a trava de scroll para iOS
+  useScrollLock(isAnyModalOpen);
 
   useEffect(() => {
     async function loadPrefs() {
@@ -223,10 +221,21 @@ export function ShoppingList() {
   }, [pushPromptResolved]);
 
   const handleEnablePush = async () => {
-    localStorage.setItem('carrin_push_prompt_seen', 'true');
-    setShowPushPrompt(false);
-    setPushPromptResolved(true);
-    if (user) await notificationService.subscribeToPushNotifications();
+    if (user) {
+      // 1. Aguarda a resposta real do banco (Passo 1 e 2 que fizemos)
+      const success = await notificationService.subscribeToPushNotifications();
+      
+      // 2. Se deu tudo certo, salva no localStorage para não encher mais o saco do usuário
+      if (success) {
+        localStorage.setItem('carrin_push_prompt_seen', 'true');
+        setPushPromptResolved(true);
+        // Retiramos o setShowPushPrompt(false) daqui, pois o Modal vai fechar sozinho após mostrar o ✅
+      }
+      
+      // 3. Devolve a resposta para o Modal saber qual tela mostrar (Sucesso ou Erro)
+      return success;
+    }
+    return false;
   };
 
   const handleDeclinePush = () => {
@@ -327,14 +336,34 @@ export function ShoppingList() {
   const handleDelete = async (id: string) => {
     const itemToDelete = items.find(i => i.id === id);
     if (!itemToDelete) return;
+    
     const previousItems = [...items];
     setItems(items.filter(item => item.id !== id));
+    
     try {
+      // 1. FLUXO ANTIGO PRESERVADO: Exclui o item
       await itemService.deleteItem(id);
+      
+      // 2. FLUXO ANTIGO PRESERVADO: Ativa o Desfazer
       if (undoDelete?.timerId) clearTimeout(undoDelete.timerId);
       const timerId = setTimeout(() => setUndoDelete(null), 5000);
       setUndoDelete({ item: itemToDelete, timerId });
+
+      // 3. NOVO: Notificação Totalmente Isolada
+      if (homeId) {
+        try {
+          await supabase.rpc('notify_items_removed', {
+            p_count: 1,
+            p_home_id: homeId,
+            p_item_name: itemToDelete.name
+          });
+        } catch (notifyError) {
+          console.error('ITEM_REMOVED_NOTIFICATION_ERROR:', notifyError);
+        }
+      }
+
     } catch (error) {
+      // 4. Se chegou aqui, o erro foi na EXCLUSÃO real (banco offline, RLS, etc)
       console.error("Erro ao deletar item:", error);
       setItems(previousItems);
       alert("Erro ao excluir o item. Verifique sua conexão.");
@@ -358,14 +387,32 @@ export function ShoppingList() {
 
   const handleClearList = async () => {
     if (!activeListId || clearingList) return;
+    
     const snapshot = [...items];
     setClearingList(true);
+    
     try {
+      // 1. FLUXO ANTIGO PRESERVADO
       await itemService.clearActiveList(activeListId);
+      
       setItems([]);
       if (undoClear?.timerId) clearTimeout(undoClear.timerId);
       const timerId = setTimeout(() => setUndoClear(null), 5000);
       setUndoClear({ items: snapshot, timerId });
+
+      // 2. NOVO: Notificação Isolada Agrupada
+      if (homeId && snapshot.length > 0) {
+        try {
+          await supabase.rpc('notify_items_removed', {
+            p_count: snapshot.length,
+            p_home_id: homeId,
+            p_item_name: null
+          });
+        } catch (notifyError) {
+          console.error('ITEM_REMOVED_NOTIFICATION_ERROR:', notifyError);
+        }
+      }
+
     } catch (error) {
       console.error("Erro ao limpar a lista:", error);
       alert("Houve um erro ao limpar a lista. Verifique sua conexão.");

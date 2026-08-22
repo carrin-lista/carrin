@@ -31,18 +31,17 @@ export function Support({ onBack }: SupportProps) {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   
-  // Form Novo Chamado
   const [category, setCategory] = useState('other');
   const [subject, setSubject] = useState('');
   const [description, setDescription] = useState('');
 
-  // Form Chat
   const [newMessage, setNewMessage] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   
-  // 🚀 NOVO: Estados de Digitação
+  // 🚀 Controle de Digitação (Debounce/Timeout)
   const [adminTyping, setAdminTyping] = useState(false);
-  const typingTimeoutRef = useRef<NodeJS.Timeout>();
+  const typingTimeoutRef = useRef<number | undefined>(undefined);
+  const lastTypingSentRef = useRef<number>(0);
 
   useEffect(() => {
     if (view === 'list') loadTickets();
@@ -50,32 +49,39 @@ export function Support({ onBack }: SupportProps) {
     if (view === 'chat' && selectedTicket) {
       loadMessages();
 
-      // 🚀 INÍCIO DO REALTIME (POSTGRES + BROADCAST)
-      const channel = supabase.channel(`ticket_${selectedTicket.id}`)
-        // 1. Ouve novas respostas da equipe no banco
-        .on(
-          'postgres_changes',
-          { event: 'INSERT', schema: 'public', table: 'support_ticket_messages', filter: `ticket_id=eq.${selectedTicket.id}` },
-          () => {
-            loadMessages();
-          }
-        )
-        // 2. Ouve o Broadcast de Digitação do Admin
-        .on(
-          'broadcast',
-          { event: 'admin_typing' },
-          (payload) => {
-            if (payload.payload.isTyping) {
-              setAdminTyping(true);
-              clearTimeout(typingTimeoutRef.current);
-              typingTimeoutRef.current = setTimeout(() => setAdminTyping(false), 3000);
-            } else {
-              setAdminTyping(false);
-            }
-          }
-        )
-        .subscribe();
+      // 1. Conecta no canal exclusivo deste ticket
+      const channel = supabase.channel(`support:${selectedTicket.id}`);
 
+      // 2. Escuta mensagens em tempo real (DEDUPLICAÇÃO)
+      channel.on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'support_ticket_messages', filter: `ticket_id=eq.${selectedTicket.id}` },
+        (payload) => {
+          // Bloqueio extra: ignora notas internas no frontend
+          if (payload.new.is_internal) return;
+
+          setMessages(prev => {
+            // Deduplicação estrita via message.id
+            if (prev.some(m => m.id === payload.new.id)) return prev;
+            return [...prev, payload.new];
+          });
+        }
+      );
+
+      // 3. Escuta a digitação do atendente
+      channel.on(
+        'broadcast',
+        { event: 'agent_typing' },
+        () => {
+          setAdminTyping(true);
+          clearTimeout(typingTimeoutRef.current);
+          typingTimeoutRef.current = setTimeout(() => setAdminTyping(false), 3000) as unknown as number;
+        }
+      );
+
+      channel.subscribe();
+
+      // 4. Cleanup: Limpa canais e timers ao sair do chat
       return () => {
         supabase.removeChannel(channel);
         clearTimeout(typingTimeoutRef.current);
@@ -87,7 +93,7 @@ export function Support({ onBack }: SupportProps) {
     if (view === 'chat') {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [messages, adminTyping]); // Atualiza o scroll também quando o "digitando..." aparece
+  }, [messages, adminTyping]);
 
   const loadTickets = async () => {
     if (!user) return;
@@ -136,38 +142,38 @@ export function Support({ onBack }: SupportProps) {
     if (!user || !selectedTicket || !newMessage.trim()) return;
 
     const messageText = newMessage.trim();
-    setNewMessage(''); // Otimismo na UI
+    const tempId = `temp_${Date.now()}`;
+    setNewMessage(''); 
     
-    // Dispara que parou de digitar ao enviar
-    supabase.channel(`ticket_${selectedTicket.id}`).send({
-      type: 'broadcast',
-      event: 'typing',
-      payload: { isTyping: false }
-    });
-    
-    // Adiciona temporariamente na tela
-    setMessages(prev => [...prev, { id: 'temp', message: messageText, sender_user_id: user.id, created_at: new Date().toISOString() }]);
+    // Otimismo UI
+    setMessages(prev => [...prev, { id: tempId, message: messageText, sender_user_id: user.id, created_at: new Date().toISOString() }]);
 
     try {
       await supportService.sendMessage(selectedTicket.id, user.id, messageText);
-      loadMessages(); // Recarrega do banco
+      // Ao recarregar, o banco traz o ID real. Como limpamos o tempId local, não haverá duplicatas.
+      await loadMessages(); 
     } catch (error) {
       console.error(error);
       alert('Erro ao enviar mensagem.');
-      loadMessages(); // Reverte a mensagem temporária em caso de erro
+      // Reverte a temporária em caso de erro
+      setMessages(prev => prev.filter(m => m.id !== tempId));
     }
   };
 
-  // 🚀 NOVO: Função para avisar o console que o cliente está digitando
+  // 🚀 Throttle de digitação: Envia no máximo 1 vez a cada 2 segundos
   const handleTyping = (e: React.ChangeEvent<HTMLInputElement>) => {
     setNewMessage(e.target.value);
     
-    if (selectedTicket) {
-      supabase.channel(`ticket_${selectedTicket.id}`).send({
-        type: 'broadcast',
-        event: 'typing',
-        payload: { isTyping: e.target.value.length > 0 }
-      });
+    if (selectedTicket && e.target.value.length > 0) {
+      const now = Date.now();
+      if (now - lastTypingSentRef.current > 2000) {
+        supabase.channel(`support:${selectedTicket.id}`).send({
+          type: 'broadcast',
+          event: 'user_typing',
+          payload: {}
+        });
+        lastTypingSentRef.current = now;
+      }
     }
   };
 
@@ -186,7 +192,6 @@ export function Support({ onBack }: SupportProps) {
   return (
     <div className="min-h-screen bg-carrin-bg p-6 pb-32 max-w-lg mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
       
-      {/* Header Dinâmico */}
       <div className="flex items-center gap-3">
         <button 
           onClick={() => {
@@ -207,7 +212,6 @@ export function Support({ onBack }: SupportProps) {
         </div>
       </div>
 
-      {/* VISTA: LISTA DE CHAMADOS */}
       {view === 'list' && (
         <div className="space-y-4">
           <button 
@@ -255,7 +259,6 @@ export function Support({ onBack }: SupportProps) {
         </div>
       )}
 
-      {/* VISTA: NOVO CHAMADO */}
       {view === 'new' && (
         <form onSubmit={handleCreateTicket} className="bg-white rounded-card p-5 shadow-sm border border-gray-100 space-y-4">
           <div>
@@ -300,7 +303,6 @@ export function Support({ onBack }: SupportProps) {
         </form>
       )}
 
-      {/* VISTA: CHAT */}
       {view === 'chat' && (
         <div className="flex flex-col h-[65vh] bg-white rounded-card shadow-sm border border-gray-100 overflow-hidden">
           
@@ -331,7 +333,6 @@ export function Support({ onBack }: SupportProps) {
               })
             )}
             
-            {/* 🚀 NOVO: UI DE DIGITANDO */}
             {adminTyping && (
               <div className="flex items-start">
                 <span className="text-[10px] text-gray-500 italic bg-gray-50 px-3 py-1.5 rounded-full border border-gray-100 animate-pulse">
@@ -348,7 +349,7 @@ export function Support({ onBack }: SupportProps) {
                 type="text"
                 placeholder="Escreva uma mensagem..."
                 value={newMessage}
-                onChange={handleTyping} // <--- SUBSTITUÍDO: Agora chama o broadcast
+                onChange={handleTyping}
                 className="flex-1 bg-gray-50 border border-gray-200 rounded-full px-4 py-2.5 text-sm outline-none focus:border-emerald-600"
               />
               <button 

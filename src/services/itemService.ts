@@ -65,7 +65,7 @@ export const itemService = {
       is_completed: isCompleted, 
       updated_at: new Date().toISOString() 
     };
-    
+
     if (price !== undefined) updateData.price = price;
     if (unitPrice !== undefined) updateData.unit_price = unitPrice;
     if (boughtQuantity !== undefined) updateData.bought_quantity = boughtQuantity;
@@ -78,22 +78,40 @@ export const itemService = {
     if (error) throw error;
   },
 
-  async deleteItem(itemId: string) {
+  // 1. Exclusão Original e Desacoplada
+  async deleteItem(itemId: string, homeId?: string, itemName?: string) {
     const { error } = await supabase
       .from('shopping_items')
       .delete()
       .eq('id', itemId);
 
     if (error) throw error;
+
+    if (homeId && itemName) {
+      supabase.rpc('notify_items_removed', { 
+        p_count: 1, 
+        p_home_id: homeId, 
+        p_item_name: itemName 
+      }).catch(console.error); 
+    }
   },
 
-  async clearActiveList(shoppingListId: string) {
+  // 2. Limpar Lista Original e Desacoplada
+  async clearActiveList(shoppingListId: string, homeId?: string, itemCount?: number) {
     const { error } = await supabase
       .from('shopping_items')
       .delete()
       .eq('shopping_list_id', shoppingListId);
 
     if (error) throw error;
+
+    if (homeId && itemCount && itemCount > 0) {
+      supabase.rpc('notify_items_removed', { 
+        p_count: itemCount, 
+        p_home_id: homeId, 
+        p_item_name: null 
+      }).catch(console.error);
+    }
   },
 
   async updateItem(itemId: string, updates: { name?: string; quantity?: number | null; unit?: string | null; observation?: string; category_id?: string }) {
@@ -107,7 +125,7 @@ export const itemService = {
 
   async getRecentItemSuggestions(homeId: string, query: string) {
     if (!query || query.trim().length < 2) return [];
-    
+
     const { data, error } = await supabase
       .from('shopping_items')
       .select('name, quantity, unit, price, unit_price, bought_quantity')
@@ -124,7 +142,7 @@ export const itemService = {
 
     const uniqueItems: any[] = [];
     const seen = new Set();
-    
+
     for (const item of data || []) {
       const normalized = item.name.trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
       if (!seen.has(normalized)) {
@@ -132,7 +150,7 @@ export const itemService = {
         uniqueItems.push(item);
       }
     }
-    
+
     return uniqueItems.slice(0, 4);
   }
 };

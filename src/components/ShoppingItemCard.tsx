@@ -43,41 +43,50 @@ export function ShoppingItemCard({
   const swipeDirection = useRef<'left' | 'right' | null>(null);
   const longPressTimer = useRef<any>(null);
 
-  // Estados do Menu de Ações Rápidas e Ref do Card inteiro
+  // Estados dos Menus e Card
   const [showActionMenu, setShowActionMenu] = useState(false);
   const [isMovingCategory, setIsMovingCategory] = useState(false);
+  const [showDesktopMenu, setShowDesktopMenu] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
 
-  // Escuta cliques fora do card para fechar qualquer estado aberto (swipes ou menus)
+  // Detecta se é um ambiente Desktop (Mouse/Pointer preciso)
+  const isDesktop = typeof window !== 'undefined' && window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent | TouchEvent) => {
       if (cardRef.current && !cardRef.current.contains(event.target as Node)) {
         closeActions();
       }
     };
+
+    const handleEsc = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeActions();
+    };
     
-    if (showActionMenu || isMovingCategory || offsetX !== 0) {
+    if (showActionMenu || isMovingCategory || offsetX !== 0 || showDesktopMenu) {
       document.addEventListener('mousedown', handleClickOutside);
       document.addEventListener('touchstart', handleClickOutside);
+      document.addEventListener('keydown', handleEsc);
     }
     
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
       document.removeEventListener('touchstart', handleClickOutside);
+      document.removeEventListener('keydown', handleEsc);
     };
-  }, [showActionMenu, isMovingCategory, offsetX]);
+  }, [showActionMenu, isMovingCategory, offsetX, showDesktopMenu]);
 
   const closeActions = () => {
     setShowActionMenu(false);
     setIsMovingCategory(false);
+    setShowDesktopMenu(false);
     setOffsetX(0);
     setIsSwipedRight(false);
     setIsSwipedLeft(false);
   };
 
   const handleTouchStart = (e: React.TouchEvent) => {
-    // Se já estiver com swipe ativado ou menus abertos, ignora novo arrasto
-    if (isCompleted || showActionMenu || isMovingCategory || isSwipedLeft || isSwipedRight) return;
+    if (isCompleted || showActionMenu || isMovingCategory || isSwipedLeft || isSwipedRight || showDesktopMenu) return;
     
     touchStartX.current = e.touches[0].clientX;
     touchCurrentX.current = e.touches[0].clientX;
@@ -89,34 +98,28 @@ export function ShoppingItemCard({
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
-    if (isCompleted || showActionMenu || isMovingCategory || isSwipedLeft || isSwipedRight) return;
-    if (longPressTimer.current) {
-      clearTimeout(longPressTimer.current);
-    }
+    if (isCompleted || showActionMenu || isMovingCategory || isSwipedLeft || isSwipedRight || showDesktopMenu) return;
+    if (longPressTimer.current) clearTimeout(longPressTimer.current);
 
     touchCurrentX.current = e.touches[0].clientX;
     const diff = touchCurrentX.current - touchStartX.current;
 
-    // Trava a direção do arrasto (evita tremer e vazar fundo vermelho se o dedo balançar)
     if (!swipeDirection.current) {
       if (diff > 10) swipeDirection.current = 'right';
       else if (diff < -10) swipeDirection.current = 'left';
-      else return; // Zona morta inicial
+      else return; 
     }
 
-    // Aplica o movimento restrito à direção travada
     if (swipeDirection.current === 'right') {
-      setOffsetX(Math.max(0, Math.min(diff, 90))); // Nunca deixa o diff ser negativo
+      setOffsetX(Math.max(0, Math.min(diff, 90))); 
     } else if (swipeDirection.current === 'left') {
-      setOffsetX(Math.min(0, Math.max(diff, -90))); // Nunca deixa o diff ser positivo
+      setOffsetX(Math.min(0, Math.max(diff, -90))); 
     }
   };
 
   const handleTouchEnd = () => {
-    if (isCompleted || showActionMenu || isMovingCategory || isSwipedLeft || isSwipedRight) return;
-    if (longPressTimer.current) {
-      clearTimeout(longPressTimer.current);
-    }
+    if (isCompleted || showActionMenu || isMovingCategory || isSwipedLeft || isSwipedRight || showDesktopMenu) return;
+    if (longPressTimer.current) clearTimeout(longPressTimer.current);
 
     if (swipeDirection.current === 'left' && offsetX < -45) {
       setOffsetX(-90);
@@ -133,12 +136,18 @@ export function ShoppingItemCard({
     swipeDirection.current = null;
   };
 
-  const handleClick = () => {
-    if (isSwipedLeft || isSwipedRight || showActionMenu || isMovingCategory) {
+  const handleClick = (e: React.MouseEvent) => {
+    if (isSwipedLeft || isSwipedRight || showActionMenu || isMovingCategory || showDesktopMenu) {
       closeActions();
       return;
     }
     
+    // NOVO: Menu Contextual Desktop (Apenas se for mouse)
+    if (isDesktop && !isMarketMode && !isCompleted) {
+      setShowDesktopMenu(true);
+      return;
+    }
+
     if (!isMarketMode && !isCompleted) return;
     onToggle();
   };
@@ -176,7 +185,7 @@ export function ShoppingItemCard({
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
         onMouseDown={() => {
-          if (!isCompleted && !showActionMenu && !isMovingCategory && !isSwipedLeft && !isSwipedRight) {
+          if (!isCompleted && !showActionMenu && !isMovingCategory && !isSwipedLeft && !isSwipedRight && !showDesktopMenu && !isDesktop) {
             longPressTimer.current = setTimeout(() => onEdit(), 600);
           }
         }}
@@ -186,10 +195,10 @@ export function ShoppingItemCard({
         onClick={handleClick}
         style={{ transform: `translateX(${isCompleted ? 0 : offsetX}px)` }}
         className={`relative p-4 rounded-card flex items-center justify-between transition-all duration-200 select-none ${
-          (isMarketMode || isCompleted) ? 'cursor-pointer' : 'cursor-default'
+          (isMarketMode || isCompleted || isDesktop) ? 'cursor-pointer' : 'cursor-default'
         } ${
           isCompleted ? 'bg-red-300 text-white opacity-90 shadow-none' : 'bg-white shadow-sm'
-        } ${isMovingCategory ? 'opacity-30 pointer-events-none' : ''}`}
+        } ${!isCompleted && isDesktop ? 'lg:hover:bg-gray-50' : ''} ${isMovingCategory ? 'opacity-30 pointer-events-none' : ''}`}
       >
         <div className="flex items-center flex-grow pr-2 overflow-hidden">
           
@@ -228,7 +237,26 @@ export function ShoppingItemCard({
         </div>
       </div>
 
-      {/* MENUS FLUTUANTES (FIXOS NA RAIZ) */}
+      {/* NOVO: Menu Contextual Desktop */}
+      {showDesktopMenu && (
+        <div className="absolute right-4 top-[80%] bg-white border border-gray-200 shadow-xl rounded-card p-1.5 flex flex-col gap-1 z-30 min-w-[150px] animate-in fade-in zoom-in-95 duration-150">
+          <button 
+            onClick={(e) => { e.stopPropagation(); closeActions(); onEdit(); }}
+            className="flex items-center gap-2.5 w-full px-3 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-50 rounded-lg transition-colors text-left"
+          >
+            <Edit2 size={16} /> Editar item
+          </button>
+          <div className="h-px bg-gray-100 w-full my-0.5"></div>
+          <button 
+            onClick={(e) => { e.stopPropagation(); closeActions(); onDelete(); }}
+            className="flex items-center gap-2.5 w-full px-3 py-2.5 text-sm font-semibold text-red-600 hover:bg-red-50 rounded-lg transition-colors text-left"
+          >
+            <Trash2 size={16} /> Excluir item
+          </button>
+        </div>
+      )}
+
+      {/* MENUS FLUTUANTES EXISTENTES (FIXOS NA RAIZ) */}
       {showActionMenu && (
         <div className="absolute left-2 top-1/2 -translate-y-1/2 bg-white border border-gray-200 shadow-md rounded-xl p-1.5 flex gap-1 z-30 animate-in fade-in zoom-in-95 duration-150">
           <button 

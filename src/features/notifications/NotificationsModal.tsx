@@ -31,9 +31,14 @@ export function NotificationsModal({ isOpen, onClose }: NotificationsModalProps)
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Estados Mobile
   const [swipedId, setSwipedId] = useState<string | null>(null);
   const [touchStartX, setTouchStartX] = useState(0);
   const [touchCurrentX, setTouchCurrentX] = useState(0);
+
+  // Estados Desktop
+  const [desktopMenuId, setDesktopMenuId] = useState<string | null>(null);
+  const isDesktop = typeof window !== 'undefined' && window.matchMedia('(hover: hover) and (pointer: fine)').matches;
 
   useEffect(() => {
     if (!isOpen || !user) return;
@@ -79,51 +84,91 @@ export function NotificationsModal({ isOpen, onClose }: NotificationsModalProps)
     };
   }, [isOpen, user]);
 
+  // Fechar menu desktop clicando fora ou com Esc
+  useEffect(() => {
+    if (!desktopMenuId) return;
+
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setDesktopMenuId(null);
+    };
+
+    const handleClickOutside = () => {
+      setDesktopMenuId(null);
+    };
+
+    document.addEventListener('keydown', handleEsc);
+    // Mudamos de 'mousedown' e 'touchstart' para um único 'click' unificado
+    const timer = setTimeout(() => {
+      document.addEventListener('click', handleClickOutside);
+    }, 10);
+
+    return () => {
+      document.removeEventListener('keydown', handleEsc);
+      document.removeEventListener('click', handleClickOutside);
+      clearTimeout(timer);
+    };
+  }, [desktopMenuId]);
+
+  // --- AÇÕES COM ATUALIZAÇÃO OTIMISTA ---
+
   const handleMarkAsRead = async (ids: string[]) => {
+    const snapshot = [...notifications];
+    setNotifications(prev => prev.map(n => (ids.includes(n.id) ? { ...n, is_read: true } : n)));
+    setDesktopMenuId(null);
+
     try {
-      await supabase
+      const { error } = await supabase
         .from('notifications')
         .update({ is_read: true })
         .in('id', ids);
-
-      setNotifications(prev =>
-        prev.map(n => (ids.includes(n.id) ? { ...n, is_read: true } : n))
-      );
+      
+      if (error) throw error;
     } catch (error) {
-      console.error("Erro ao atualizar notificação", error);
+      console.error("Erro ao marcar como lida:", error);
+      setNotifications(snapshot); // Rollback
     }
   };
 
   const handleMarkAllAsRead = async () => {
     if (!user) return;
+    const snapshot = [...notifications];
+    setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
+
     try {
-      await supabase
+      const { error } = await supabase
         .from('notifications')
         .update({ is_read: true })
         .eq('user_id', user.id)
         .eq('is_read', false);
 
-      setNotifications(prev => prev.map(n => ({ ...n, is_read: true })));
+      if (error) throw error;
     } catch (error) {
-      console.error("Erro ao marcar todas como lidas", error);
+      console.error("Erro ao marcar todas como lidas:", error);
+      setNotifications(snapshot); // Rollback
     }
   };
 
   const handleDeleteNotification = async (ids: string[]) => {
+    const snapshot = [...notifications];
+    setNotifications(prev => prev.filter(n => !ids.includes(n.id)));
+    setSwipedId(null);
+    setDesktopMenuId(null);
+
     try {
-      await supabase
+      const { error } = await supabase
         .from('notifications')
         .delete()
         .in('id', ids);
 
-      setNotifications(prev => prev.filter(n => !ids.includes(n.id)));
-      setSwipedId(null);
+      if (error) throw error;
     } catch (error) {
       console.error("Erro ao deletar notificação:", error);
+      setNotifications(snapshot); // Rollback
+      alert("Não foi possível excluir a notificação agora.");
     }
   };
 
-  // AGRUPAMENTO INTELIGENTE CORRIGIDO
+  // --- AGRUPAMENTO INTELIGENTE (Mantido Intacto) ---
   const getGroupedNotifications = (): GroupedNotificationItem[] => {
     const grouped: GroupedNotificationItem[] = [];
     let i = 0;
@@ -134,7 +179,6 @@ export function NotificationsModal({ isOpen, onClose }: NotificationsModalProps)
       const isAddition = lowerMessage.includes('adicionou');
 
       if (isAddition) {
-        // Extrai o nome do usuário de dentro da mensagem (ex: "João adicionou Arroz" -> "João")
         const match = current.message.match(/^(.+?)\s+adicionou/i);
         const actorName = match ? match[1] : null;
 
@@ -150,7 +194,6 @@ export function NotificationsModal({ isOpen, onClose }: NotificationsModalProps)
             const nextActor = nextMatch ? nextMatch[1] : null;
             const nextIsAddition = nextLowerMessage.includes('adicionou');
 
-            // Agrupa se for do mesmo autor, também for adição e estiver num intervalo menor que 10 minutos
             if (nextActor === actorName && nextIsAddition && timeDiff < 10 * 60 * 1000) {
               batchIds.push(next.id);
               j++;
@@ -192,6 +235,7 @@ export function NotificationsModal({ isOpen, onClose }: NotificationsModalProps)
   };
 
   const displayedNotifications = getGroupedNotifications();
+  const hasUnread = notifications.some(n => !n.is_read);
 
   if (!isOpen) return null;
 
@@ -206,23 +250,23 @@ export function NotificationsModal({ isOpen, onClose }: NotificationsModalProps)
             <span>Notificações da Casa</span>
           </div>
           <div className="flex items-center gap-2">
-            {notifications.some(n => !n.is_read) && (
+            {hasUnread && (
               <button 
                 onClick={handleMarkAllAsRead}
                 title="Marcar todas como lidas"
-                className="text-xs text-emerald-600 font-semibold hover:underline flex items-center gap-1"
+                className="text-xs text-emerald-600 font-semibold hover:bg-emerald-50 px-2 py-1.5 rounded-md transition-colors flex items-center gap-1"
               >
                 <CheckCheck size={16} /> Ler todas
               </button>
             )}
-            <button onClick={onClose} className="text-gray-400 hover:text-carrin-dark p-1">
+            <button onClick={onClose} className="text-gray-400 hover:text-carrin-dark hover:bg-gray-100 p-1 rounded-full transition-colors">
               <X size={20} />
             </button>
           </div>
         </div>
 
-        {/* Lista de Notificações com Swipe to Delete */}
-        <div className="p-4 overflow-y-auto space-y-3 flex-1 overflow-x-hidden">
+        {/* Lista de Notificações */}
+        <div className="p-4 overflow-y-auto space-y-3 flex-1 overflow-x-hidden relative">
           {loading ? (
             <p className="text-center text-gray-400 py-8 text-sm">Carregando notificações...</p>
           ) : displayedNotifications.length === 0 ? (
@@ -238,11 +282,12 @@ export function NotificationsModal({ isOpen, onClose }: NotificationsModalProps)
           ) : (
             displayedNotifications.map((item) => {
               const isSwiped = swipedId === item.id;
+              const isMenuOpen = desktopMenuId === item.id;
 
               return (
-                <div key={item.id} className="relative overflow-hidden rounded-small">
+                <div key={item.id} className="relative overflow-visible rounded-small">
                   
-                  {/* Botão de Excluir ao fundo */}
+                  {/* Botão de Excluir ao fundo (Mobile Swipe) */}
                   <div className="absolute inset-y-0 right-0 w-20 bg-red-600 text-white flex items-center justify-center rounded-small">
                     <button 
                       onClick={() => handleDeleteNotification(item.originalIds)}
@@ -253,57 +298,94 @@ export function NotificationsModal({ isOpen, onClose }: NotificationsModalProps)
                     </button>
                   </div>
 
-                  {/* Card Deslizante */}
+                  {/* Card Principal */}
                   <div 
                     onTouchStart={(e) => {
+                      if (isDesktop || isMenuOpen) return;
                       setTouchStartX(e.touches[0].clientX);
                       setTouchCurrentX(e.touches[0].clientX);
                     }}
                     onTouchMove={(e) => {
+                      if (isDesktop || isMenuOpen) return;
                       setTouchCurrentX(e.touches[0].clientX);
                     }}
                     onTouchEnd={() => {
+                      if (isDesktop || isMenuOpen) return;
                       const diff = touchStartX - touchCurrentX;
-                      if (diff > 50) {
-                        setSwipedId(item.id);
-                      } else if (diff < -50) {
+                      if (diff > 50) setSwipedId(item.id);
+                      else if (diff < -50) setSwipedId(null);
+                    }}
+                    onClick={(e) => {
+                      if (isSwiped) {
                         setSwipedId(null);
+                        return;
                       }
+                      
+                      if (isDesktop) {
+                        e.stopPropagation();
+                        setDesktopMenuId(isMenuOpen ? null : item.id);
+                        return;
+                      }
+                      
+                      // No mobile, clique fora do swipe marca como lida
+                      if (!item.is_read) handleMarkAsRead(item.originalIds);
                     }}
                     style={{
                       transform: isSwiped ? 'translateX(-80px)' : 'translateX(0px)',
                       transition: 'transform 0.2s ease-in-out'
                     }}
-                    onClick={() => {
-                      if (isSwiped) {
-                        setSwipedId(null);
-                        return;
-                      }
-                      if (!item.is_read) {
-                        handleMarkAsRead(item.originalIds);
-                      }
-                    }}
                     className={`p-3 rounded-small border transition-all cursor-pointer relative bg-white select-none ${
                       item.is_read 
-                        ? 'border-gray-100 text-gray-600' 
-                        : 'border-emerald-100 text-carrin-dark font-medium shadow-sm bg-emerald-50/50'
-                    }`}
+                        ? 'border-gray-100 text-gray-500 bg-white' 
+                        : 'border-emerald-100 text-carrin-dark bg-emerald-50/30'
+                    } ${isDesktop ? 'hover:border-emerald-200' : ''}`}
                   >
-                    <div className="flex justify-between items-start mb-1">
-                      <span className="text-xs font-bold text-carrin-dark">{item.title}</span>
-                      <span className="text-[10px] text-gray-400">
+                    <div className="flex justify-between items-start mb-1 pr-6">
+                      <div className="flex items-center gap-1.5">
+                        {!item.is_read && <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full shrink-0 shadow-sm" />}
+                        <span className={`text-xs ${item.is_read ? 'font-semibold' : 'font-extrabold'}`}>{item.title}</span>
+                      </div>
+                      <span className="text-[10px] text-gray-400 shrink-0">
                         {new Date(item.created_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
                       </span>
                     </div>
-                    <p className="text-xs text-gray-600">{item.message}</p>
-                  </div>
+                    <p className={`text-xs ${item.is_read ? 'text-gray-500' : 'text-gray-700 font-medium'}`}>{item.message}</p>
+                    
+                    {/* Menu Horizontal Desktop */}
+                    {isMenuOpen && (
+                      <div 
+                        className="absolute right-2 top-2 flex items-center gap-1 bg-white border border-gray-200 shadow-md p-1 rounded-md z-10 animate-in fade-in zoom-in-95 duration-150"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {!item.is_read && (
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleMarkAsRead(item.originalIds);
+                            }}
+                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded transition-colors"
+                          >
+                            <CheckCheck size={14} /> Lida
+                          </button>
+                        )}
+                        <button 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteNotification(item.originalIds);
+                          }}
+                          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 rounded transition-colors"
+                        >
+                          <Trash2 size={14} /> Excluir
+                        </button>
+                      </div>
+                    )}
 
+                  </div>
                 </div>
               );
             })
           )}
         </div>
-
       </div>
     </div>
   );

@@ -11,7 +11,7 @@ export type NotificationItem = {
   created_at: string;
 }
 
-// Lendo a chave do .env (Garante única fonte de verdade e segurança)[cite: 5]
+// Lendo a chave do .env (Garante única fonte de verdade e segurança)
 const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY;
 
 // Helper para converter VAPID
@@ -30,7 +30,7 @@ function urlBase64ToUint8Array(base64String: string) {
   return outputArray;
 }
 
-// Helper para validar a chave da inscrição atual[cite: 5]
+// Helper para validar a chave da inscrição atual
 function isSubscriptionUsingCurrentVapidKey(subscription: PushSubscription, currentVapidBase64: string): boolean {
   if (!subscription.options.applicationServerKey) return false;
   
@@ -50,36 +50,33 @@ export const notificationService = {
   
   // --- LÓGICA DE WEB PUSH NOTIFICATIONS ---
 
-  async subscribeToPushNotifications() {
+  async subscribeToPushNotifications(): Promise<boolean> {
     if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
       console.warn('Push messaging não é suportado neste navegador.');
-      return;
+      return false;
     }
 
     if (!VAPID_PUBLIC_KEY) {
       console.error('VITE_VAPID_PUBLIC_KEY não está configurada no .env');
-      return;
+      return false;
     }
 
     try {
       const permission = await Notification.requestPermission();
       if (permission !== 'granted') {
         console.warn('Permissão para notificações foi negada pelo usuário.');
-        return;
+        return false;
       }
 
-      // Consome o Service Worker oficial gerenciado pelo pwa.ts[cite: 5]
       const registration = await navigator.serviceWorker.ready;
-
       let subscription = await registration.pushManager.getSubscription();
 
-      // Verifica se a subscription existente pertence a uma VAPID antiga[cite: 5]
       if (subscription) {
         const isValid = isSubscriptionUsingCurrentVapidKey(subscription, VAPID_PUBLIC_KEY);
         if (!isValid) {
           console.warn('Subscription antiga detectada (VAPID divergente). Recriando...');
           await subscription.unsubscribe();
-          subscription = null; // Força a criação de uma nova abaixo
+          subscription = null; 
         }
       }
 
@@ -90,14 +87,13 @@ export const notificationService = {
         });
       }
 
-      // Usa o toJSON exigido para evitar quebra de chaves em navegadores diferentes[cite: 5]
       const subscriptionJSON = subscription.toJSON();
 
       if (!subscriptionJSON.endpoint || !subscriptionJSON.keys?.p256dh || !subscriptionJSON.keys?.auth) {
         throw new Error('PushSubscription inválida ou incompleta.');
       }
 
-      // Invoca a Edge Function para o backend decidir o ownership baseado no JWT do usuário[cite: 5]
+      // Chama a Edge Function 
       const { data, error } = await supabase.functions.invoke('register-push-subscription', {
         body: {
           endpoint: subscriptionJSON.endpoint,
@@ -106,14 +102,18 @@ export const notificationService = {
         }
       });
 
+      // VALIDAÇÃO REAL DO BACKEND
       if (error || !data?.success) {
-        console.error('Erro ao registrar subscription no backend:', error || data?.error);
-      } else {
-        console.log('Inscrição Web Push salva com sucesso! Ação:', data.action);
+        console.error('Erro real retornado pela Edge Function:', error || data?.error);
+        return false; // Retorna falso, impedindo a UI de comemorar vitória
       }
 
+      console.log('Inscrição Web Push salva no banco com sucesso!');
+      return true; // Sucesso Absoluto (Estado 3)
+
     } catch (error) {
-      console.error('Erro durante a inscrição do Web Push:', error);
+      console.error('Erro durante o fluxo de inscrição do Web Push:', error);
+      return false; // Retorna falso em caso de quebra no frontend
     }
   },
 
@@ -154,6 +154,19 @@ export const notificationService = {
 
     if (error) {
       console.error("Erro ao marcar todas como lidas:", error);
+      throw error;
+    }
+  },
+
+  // NOVO: Exclusão persistente isolada
+  async deleteNotification(notificationId: string) {
+    const { error } = await supabase
+      .from('notifications')
+      .delete()
+      .eq('id', notificationId);
+
+    if (error) {
+      console.error("Erro ao excluir notificação no banco:", error);
       throw error;
     }
   }

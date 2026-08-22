@@ -2,56 +2,18 @@ import { supabase } from './supabase';
 
 export const historyService = {
   
-  async uploadReceipt(file: File, homeId: string): Promise<string> {
-    const fileExt = file.name.split('.').pop();
-    const fileName = `${homeId}/${Date.now()}-${Math.random().toString(36).substring(7)}.${fileExt}`;
-    
-    const { error } = await supabase.storage
-      .from('receipts')
-      .upload(fileName, file);
+  // Adaptado para usar a RPC transacional unificada que trata Main e Quick nativamente
+  async finishActiveList(_homeId: string, listId: string, totalAmount: number, receiptUrls: string[], marketName?: string): Promise<string | null> {
+    const { data, error } = await supabase.rpc('finish_shopping_list', {
+      p_list_id: listId,
+      p_total_amount: totalAmount,
+      p_receipt_urls: receiptUrls || [],
+      p_market_name: marketName || null
+    });
 
     if (error) throw error;
-
-    const { data } = supabase.storage
-      .from('receipts')
-      .getPublicUrl(fileName);
-
-    return data.publicUrl;
-  },
-
-  async finishActiveList(homeId: string, activeListId: string, totalAmount: number, receiptUrls: string[] = [], marketName?: string) {
-    const { error: updateError } = await supabase
-      .from('shopping_lists')
-      .update({ 
-        status: 'completed', 
-        total_amount: totalAmount,
-        receipt_urls: receiptUrls,
-        market_name: marketName || null,
-        completed_at: new Date().toISOString() 
-      })
-      .eq('id', activeListId);
-
-    if (updateError) {
-      console.warn("Aviso ao atualizar detalhes, executando fallback básico:", updateError);
-      const { error: fallbackError } = await supabase
-        .from('shopping_lists')
-        .update({ 
-          status: 'completed', 
-          completed_at: new Date().toISOString() 
-        })
-        .eq('id', activeListId);
-
-      if (fallbackError) throw fallbackError;
-    }
-
-    const { data: newList, error: createError } = await supabase
-      .from('shopping_lists')
-      .insert([{ home_id: homeId, status: 'active' }])
-      .select('id')
-      .single();
-
-    if (createError) throw createError;
-    return newList.id;
+    // Se for Main, 'data' conterá o ID da nova lista. Se for Quick, 'data' será nulo (sinalizando para voltar à Main)
+    return data;
   },
 
   async getHistory(homeId: string) {
@@ -60,11 +22,14 @@ export const historyService = {
       .select(`
         *,
         shopping_items (
-          *,
-          users (
-            id,
+          name,
+          quantity,
+          unit,
+          price,
+          is_completed,
+          category_id,
+          users!shopping_items_created_by_fkey (
             full_name,
-            username,
             avatar_url
           )
         )
@@ -77,7 +42,7 @@ export const historyService = {
     return data || [];
   },
 
-  async getRecentMarkets(homeId: string): Promise<string[]> {
+  async getRecentMarkets(homeId: string) {
     const { data, error } = await supabase
       .from('shopping_lists')
       .select('market_name')
@@ -85,15 +50,12 @@ export const historyService = {
       .eq('status', 'completed')
       .not('market_name', 'is', null)
       .order('completed_at', { ascending: false })
-      .limit(20);
+      .limit(5);
 
-    if (error) {
-      console.error("Erro ao buscar mercados recentes", error);
-      return [];
-    }
-
-    const uniqueMarkets = Array.from(new Set(data.map(item => item.market_name!.trim()))).filter(Boolean);
-    return uniqueMarkets.slice(0, 5); 
+    if (error) throw error;
+    
+    const uniqueMarkets = Array.from(new Set(data.map(list => list.market_name))).filter(Boolean);
+    return uniqueMarkets;
   },
 
   async updateMarketName(listId: string, marketName: string | null) {
@@ -103,5 +65,23 @@ export const historyService = {
       .eq('id', listId);
 
     if (error) throw error;
+  },
+  
+  async uploadReceipt(file: File, homeId: string): Promise<string> {
+    const fileExt = file.name.split('.').pop();
+    const fileName = `${Math.random().toString(36).substring(2)}-${Date.now()}.${fileExt}`;
+    const filePath = `${homeId}/${fileName}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from('receipts')
+      .upload(filePath, file);
+
+    if (uploadError) throw uploadError;
+
+    const { data } = supabase.storage
+      .from('receipts')
+      .getPublicUrl(filePath);
+
+    return data.publicUrl;
   }
 };

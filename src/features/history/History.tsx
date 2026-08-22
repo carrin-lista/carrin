@@ -104,10 +104,15 @@ export function History({ isActive }: HistoryProps) {
     return () => { supabase.removeChannel(channel); };
   }, [homeId, loadData]);
 
+  // CORREÇÃO: Garante que lê a Main List
   useEffect(() => {
     if (selectedReceiptId && homeId) {
-      itemService.getItems(homeId).then(items => {
-        setActiveListNames(items.map(i => normalizeStr(i.name)));
+      itemService.getActiveMainListId(homeId).then(mainListId => {
+        if (mainListId) {
+          itemService.getItems(mainListId).then(items => {
+            setActiveListNames(items.map(i => normalizeStr(i.name)));
+          }).catch(console.error);
+        }
       }).catch(console.error);
     }
   }, [selectedReceiptId, homeId]);
@@ -123,12 +128,16 @@ export function History({ isActive }: HistoryProps) {
     );
   };
 
+  // CORREÇÃO: Restaura os itens sempre na Lista Principal (Main)
   const handleRestoreUnboughtItems = async (unboughtItems: any[]) => {
     if (!homeId || !user || unboughtItems.length === 0) return;
     setRestoring(true);
     
     try {
-      const currentActive = await itemService.getItems(homeId);
+      const mainListId = await itemService.getActiveMainListId(homeId);
+      if (!mainListId) throw new Error("Lista principal não encontrada");
+
+      const currentActive = await itemService.getItems(mainListId);
       const currentNames = currentActive.map(i => normalizeStr(i.name));
       const itemsToAdd = unboughtItems.filter(item => !currentNames.includes(normalizeStr(item.name)));
 
@@ -145,6 +154,7 @@ export function History({ isActive }: HistoryProps) {
           observation: item.observation,
           category_id: item.category_id || '🛒 Mantimentos',
           home_id: homeId,
+          shopping_list_id: mainListId,
           created_by: user.id
         } as any)
       ));
@@ -166,10 +176,14 @@ export function History({ isActive }: HistoryProps) {
     }
   };
 
+  // CORREÇÃO: Prepara "Comprar novamente" usando a Lista Principal (Main)
   const handleOpenBuyAgain = async (receiptId: string) => {
     setPreparingBuyAgain(true);
     try {
-      const currentActive = await itemService.getItems(homeId!);
+      const mainListId = await itemService.getActiveMainListId(homeId!);
+      if (!mainListId) throw new Error("Lista principal não encontrada");
+
+      const currentActive = await itemService.getItems(mainListId);
       const currentNormalizedNames = currentActive.map(i => normalizeStr(i.name));
       setActiveListNames(currentNormalizedNames);
       
@@ -191,6 +205,7 @@ export function History({ isActive }: HistoryProps) {
     }
   };
 
+  // CORREÇÃO: Executa "Comprar novamente" salvando na Lista Principal (Main)
   const handleConfirmBuyAgain = async () => {
     if (!homeId || !user || !buyAgainReceipt) return;
     
@@ -200,7 +215,10 @@ export function History({ isActive }: HistoryProps) {
 
     setBuyingAgain(true);
     try {
-      const currentActive = await itemService.getItems(homeId);
+      const mainListId = await itemService.getActiveMainListId(homeId);
+      if (!mainListId) throw new Error("Lista principal não encontrada");
+
+      const currentActive = await itemService.getItems(mainListId);
       const currentNames = currentActive.map(i => normalizeStr(i.name));
       const itemsToAdd = itemsToAttempt.filter((item: any) => !currentNames.includes(normalizeStr(item.name)));
 
@@ -218,6 +236,7 @@ export function History({ isActive }: HistoryProps) {
           observation: item.observation,
           category_id: item.category_id || '🛒 Mantimentos',
           home_id: homeId,
+          shopping_list_id: mainListId,
           created_by: user.id
         } as any)
       ));
@@ -419,6 +438,19 @@ export function History({ isActive }: HistoryProps) {
                                 <Clock size={10} /> {formattedTime}
                               </span>
                             </div>
+
+                            {/* EXIBIÇÃO: Lista Rápida */}
+                            {list.list_type === 'quick' && (
+                              <div className="mb-1.5 flex items-center gap-1.5">
+                                <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-small uppercase tracking-wider flex items-center gap-1 w-max">
+                                  Lista Rápida
+                                </span>
+                                <span className="text-xs font-extrabold text-carrin-dark truncate max-w-[120px]">
+                                  {list.name || 'Lista Rápida'}
+                                </span>
+                              </div>
+                            )}
+
                             {list.market_name && (
                               <p className="text-[11px] font-extrabold uppercase tracking-wider text-carrin-dark flex items-center gap-1 mb-1">
                                 <Store size={12} className="text-gray-400" /> {list.market_name}
@@ -523,6 +555,19 @@ export function History({ isActive }: HistoryProps) {
                   <X size={18} />
                 </button>
                 <h2 className="text-xl font-extrabold text-carrin-dark mb-1">Recibo da Compra</h2>
+                
+                {/* EXIBIÇÃO: Lista Rápida no Modal */}
+                {selectedReceipt.list_type === 'quick' && (
+                  <div className="mb-1 flex items-center gap-1.5">
+                    <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-small uppercase tracking-wider flex items-center gap-1 w-max">
+                      Lista Rápida
+                    </span>
+                    <span className="text-xs font-extrabold text-gray-600 truncate max-w-[150px]">
+                      {selectedReceipt.name || 'Lista Rápida'}
+                    </span>
+                  </div>
+                )}
+                
                 <p className="text-xs text-gray-500 font-medium">{fullDate} às {time}</p>
                 
                 <div className="mt-3">
@@ -765,7 +810,7 @@ export function History({ isActive }: HistoryProps) {
                     <X size={16} />
                   </button>
                 </div>
-                <p className="text-xs text-gray-500">Selecione os itens que deseja enviar de volta para sua Lista atual. Itens que já estão pendentes na sua casa foram desmarcados.</p>
+                <p className="text-xs text-gray-500">Selecione os itens que deseja enviar de volta para sua Lista principal. Itens que já estão pendentes na sua casa foram desmarcados.</p>
               </div>
 
               <div className="p-5 overflow-y-auto space-y-1">
@@ -808,7 +853,7 @@ export function History({ isActive }: HistoryProps) {
                   disabled={selectedCount === 0 || buyingAgain}
                   className="w-full bg-emerald-600 text-white py-3 rounded-small text-sm font-bold flex items-center justify-center gap-2 hover:bg-emerald-700 transition-all disabled:opacity-50 shadow-sm"
                 >
-                  {buyingAgain ? 'Adicionando...' : `Adicionar à Lista (${selectedCount})`}
+                  {buyingAgain ? 'Adicionando...' : `Adicionar à Lista Principal (${selectedCount})`}
                 </button>
               </div>
             </div>

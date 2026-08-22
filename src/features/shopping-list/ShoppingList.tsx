@@ -10,7 +10,7 @@ import { Home } from '../home/Home';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { itemService } from '../../services/itemService';
 import { historyService } from '../../services/historyService';
-import { CheckCheck, ShoppingCart, X, AlertCircle, Play, Search, ListFilter, Plus, Minus, MoreVertical, Check, User, RotateCcw } from 'lucide-react';
+import { CheckCheck, ShoppingCart, X, AlertCircle, Play, Search, ListFilter, Plus, Minus, MoreVertical, Check, User, RotateCcw, PlusCircle, Edit2, ChevronLeft } from 'lucide-react';
 import { NotificationBell } from '../notifications/NotificationBell';
 import { PushPermissionModal } from './PushPermissionModal'; 
 import { notificationService } from '../../services/notificationService';
@@ -39,20 +39,31 @@ export function ShoppingList() {
   const [currentTab, setCurrentTab] = useState(() => {
     return localStorage.getItem('carrin_current_tab') || 'list';
   });
+
+  // ================= ESTADOS DAS LISTAS =================
+  const [mainListId, setMainListId] = useState<string | null>(null);
+  const [quickList, setQuickList] = useState<{ id: string, name: string | null } | null>(null);
+  const [selectedListId, setSelectedListId] = useState<string | null>(null);
+  const selectedListType = selectedListId === quickList?.id ? 'quick' : 'main';
+
   const [items, setItems] = useState<any[]>([]);
-  const [activeListId, setActiveListId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<'category' | 'alphabetical' | 'recent' | 'oldest' | 'resident'>('category');
   const [emptyMessage, setEmptyMessage] = useState(EMPTY_MESSAGES[0]);
 
-  const [isMarketMode, setIsMarketMode] = useState(() => {
-    return localStorage.getItem('carrin_is_market_mode') === 'true';
-  });
-
-  const [hasActiveMarketSession, setHasActiveMarketSession] = useState(() => {
-    return localStorage.getItem('carrin_market_session_active') === 'true';
-  });
+  // ================= MODO MERCADO =================
+  const getMarketSessions = () => JSON.parse(localStorage.getItem('carrin_market_sessions_v1') || '{}');
+  const saveMarketSession = (listId: string, active: boolean) => {
+    const sessions = getMarketSessions();
+    if (active) sessions[listId] = { active: true };
+    else delete sessions[listId];
+    localStorage.setItem('carrin_market_sessions_v1', JSON.stringify(sessions));
+    setIsMarketMode(active);
+  };
+  const [isMarketMode, setIsMarketMode] = useState(false);
+  const hasActiveMarketSession = Object.keys(getMarketSessions()).length > 0;
   
   const [syncStatus, setSyncStatus] = useState<'Salvando...' | 'Salvo ✓' | 'Sem conexão • pendente' | null>(null);
   const [showFabTooltip, setShowFabTooltip] = useState(false);
@@ -68,18 +79,28 @@ export function ShoppingList() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isFinishModalOpen, setIsFinishModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<any | null>(null);
-  const [loading, setLoading] = useState(true);
   const [finishing, setFinishing] = useState(false);
   const [homePreferences, setHomePreferences] = useState<Record<string, string>>({});
   
   const [userPrefs, setUserPrefs] = useState<any>(null);
-  const [showListMenu, setShowListMenu] = useState(false);
+
+  // ================= MENUS =================
+  const [showListSwitcherMenu, setShowListSwitcherMenu] = useState(false); // Menu 1 (Título)
+  const [showListActionsMenu, setShowListActionsMenu] = useState(false);   // Menu 2 (Filtros)
+  
+  const [showQuickIntro, setShowQuickIntro] = useState(false);
+  const [showCreateQuick, setShowCreateQuick] = useState(false);
+  const [showRenameQuick, setShowRenameQuick] = useState(false);
+  const [showDeleteQuick, setShowDeleteQuick] = useState(false);
+  const [quickListNameInput, setQuickListNameInput] = useState('');
+  const [listActionLoading, setListActionLoading] = useState(false);
+
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [clearingList, setClearingList] = useState(false);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
 
   const [undoDelete, setUndoDelete] = useState<{ item: any, timerId: ReturnType<typeof setTimeout> } | null>(null);
-  const [undoClear, setUndoClear] = useState<{ items: any[], timerId: ReturnType<typeof setTimeout> } | null>(null);
+  const [undoClear, setUndoClear] = useState<{ items: any[], listId: string, timerId: ReturnType<typeof setTimeout> } | null>(null);
 
   const [commercialContext, setCommercialContext] = useState<any>(null);
   const [canWrite, setCanWrite] = useState(true);
@@ -92,7 +113,7 @@ export function ShoppingList() {
     return false;
   });
 
-  const isAnyModalOpen = !!(priceModalItem || itemToUncheck || showTutorial || isFinishModalOpen || isModalOpen || showPushPrompt || showClearConfirm);
+  const isAnyModalOpen = !!(priceModalItem || itemToUncheck || showTutorial || isFinishModalOpen || isModalOpen || showPushPrompt || showClearConfirm || showQuickIntro || showCreateQuick || showRenameQuick || showDeleteQuick);
 
   // NOVO: Chama a trava de scroll para iOS
   useScrollLock(isAnyModalOpen);
@@ -117,20 +138,6 @@ export function ShoppingList() {
     }
   }, [currentTab, userPrefs, activeTutorial, startTutorial, pushPromptResolved]);
 
-  const fetchItems = useCallback(async () => {
-    if (!homeId) return;
-    try {
-      const data = await itemService.getItems(homeId);
-      setItems(data);
-    } catch (error) {
-      console.error("Erro ao buscar itens atualizados:", error);
-    }
-  }, [homeId]);
-
-  useEffect(() => {
-    localStorage.setItem('carrin_current_tab', currentTab);
-  }, [currentTab]);
-
   // FONTE ÚNICA DE VERDADE COMERCIAL
   const checkAccess = useCallback(async () => {
     if (!homeId || !user) return;
@@ -145,40 +152,94 @@ export function ShoppingList() {
     }
   }, [homeId, user]);
 
+  // ================= CARREGAMENTO INICIAL E MIGRAÇÃO =================
   useEffect(() => {
     async function loadData() {
-      if (!homeId) return;
+      if (!homeId || !user) return;
       try {
-        const listId = await itemService.getActiveListId(homeId);
-        setActiveListId(listId);
-        await fetchItems();
+        const mId = await itemService.getActiveMainListId(homeId);
+        const qList = await itemService.getActiveQuickList(homeId);
+        
+        setMainListId(mId);
+        setQuickList(qList);
+        
+        // Sempre entra na main list como padrão
+        if (mId && !selectedListId) {
+          setSelectedListId(mId);
+
+          // MIGRAR O MODO MERCADO ANTIGO
+          const oldIsMarket = localStorage.getItem('carrin_is_market_mode');
+          if (oldIsMarket === 'true') {
+            saveMarketSession(mId, true);
+            localStorage.removeItem('carrin_is_market_mode');
+            localStorage.removeItem('carrin_market_session_active');
+          } else {
+            setIsMarketMode(!!getMarketSessions()[mId]?.active);
+          }
+        }
+
         const prefs = await preferenceService.getHomeCategoryPreferences(homeId);
         setHomePreferences(prefs);
-        if (user) {
-          const { data: memberRes } = await supabase.from('home_members').select('role').eq('home_id', homeId).eq('user_id', user.id).single();
-          if (memberRes) setUserRole(memberRes.role);
-          await checkAccess();
-        }
+        const { data: memberRes } = await supabase.from('home_members').select('role').eq('home_id', homeId).eq('user_id', user.id).single();
+        if (memberRes) setUserRole(memberRes.role);
+        await checkAccess();
+        
       } catch (error) {
-        console.error("Erro ao carregar dados:", error);
-      } finally {
-        setLoading(false);
+        console.error("Erro ao carregar dados iniciais:", error);
       }
     }
     loadData();
+  }, [homeId, user, checkAccess]); // Removido selectedListId para evitar loop infinito
 
+  // ================= BUSCA DE ITENS DA LISTA SELECIONADA =================
+  useEffect(() => {
+    if (!selectedListId) return;
+    setLoading(true);
+    
+    // Atualiza o estado do Modo Mercado para a lista atual
+    setIsMarketMode(!!getMarketSessions()[selectedListId]?.active);
+
+    itemService.getItems(selectedListId)
+      .then(data => setItems(data))
+      .catch(e => console.error("Erro ao buscar itens atualizados:", e))
+      .finally(() => setLoading(false));
+
+    // REALTIME: Itens apenas desta lista
+    const itemsChannel = supabase.channel(`items_${selectedListId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'shopping_items', filter: `shopping_list_id=eq.${selectedListId}` }, (payload) => {
+        if (payload.eventType === 'INSERT') setItems(curr => curr.some(i => i.id === payload.new.id) ? curr : [payload.new, ...curr]);
+        else if (payload.eventType === 'UPDATE') setItems(curr => curr.map(i => i.id === payload.new.id ? { ...i, ...payload.new } : i));
+        else if (payload.eventType === 'DELETE') setItems(curr => curr.filter(i => i.id !== payload.old.id));
+      }).subscribe();
+
+    return () => { supabase.removeChannel(itemsChannel); };
+  }, [selectedListId]);
+
+  // ================= REALTIME: LISTAS DA CASA =================
+  useEffect(() => {
     if (!homeId) return;
-    const channel = supabase
-      .channel(`home_items_${homeId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'shopping_items', filter: `home_id=eq.${homeId}` },
-        (payload) => {
-          if (payload.eventType === 'INSERT') { setItems(current => current.some(i => i.id === payload.new.id) ? current : [payload.new, ...current]); } 
-          else if (payload.eventType === 'UPDATE') { setItems(current => current.map(i => i.id === payload.new.id ? { ...i, ...payload.new } : i)); } 
-          else if (payload.eventType === 'DELETE') { setItems(current => current.filter(i => i.id !== payload.old.id)); }
+    const listsChannel = supabase.channel(`lists_${homeId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'shopping_lists', filter: `home_id=eq.${homeId}` }, (payload) => {
+        
+        if (payload.eventType === 'INSERT' && payload.new.list_type === 'quick') {
+          setQuickList({ id: payload.new.id, name: payload.new.name });
+        } 
+        else if (payload.eventType === 'UPDATE' && payload.new.list_type === 'quick') {
+          if (payload.new.status === 'active') {
+            setQuickList({ id: payload.new.id, name: payload.new.name });
+          } else {
+            // Finalizada ou excluída
+            setQuickList(null);
+            if (selectedListId === payload.new.id) {
+              setToastMsg(payload.new.status === 'deleted' ? 'A Lista Rápida foi excluída.' : 'A Lista Rápida foi finalizada.');
+              setTimeout(() => setToastMsg(null), 4000);
+              setSelectedListId(mainListId);
+            }
+          }
         }
-      ).subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, [homeId, fetchItems, user, checkAccess]);
+      }).subscribe();
+    return () => { supabase.removeChannel(listsChannel); };
+  }, [homeId, selectedListId, mainListId]);
 
   // Ouvinte em Tempo Real para o Status Comercial
   useEffect(() => {
@@ -194,16 +255,18 @@ export function ShoppingList() {
   }, [homeId, checkAccess]);
 
   useEffect(() => {
-    localStorage.setItem('carrin_is_market_mode', String(isMarketMode));
+    localStorage.setItem('carrin_current_tab', currentTab);
+  }, [currentTab]);
+
+  useEffect(() => {
     if (isMarketMode) {
-      localStorage.setItem('carrin_market_session_active', 'true');
-      setHasActiveMarketSession(true);
       setShowFabTooltip(true);
       const timer = setTimeout(() => setShowFabTooltip(false), 5000);
       return () => clearTimeout(timer);
     } else {
       setShowFabTooltip(false);
-      setShowListMenu(false); 
+      setShowListActionsMenu(false); 
+      setShowListSwitcherMenu(false);
     }
   }, [isMarketMode]);
 
@@ -222,17 +285,11 @@ export function ShoppingList() {
 
   const handleEnablePush = async () => {
     if (user) {
-      // 1. Aguarda a resposta real do banco (Passo 1 e 2 que fizemos)
       const success = await notificationService.subscribeToPushNotifications();
-      
-      // 2. Se deu tudo certo, salva no localStorage para não encher mais o saco do usuário
       if (success) {
         localStorage.setItem('carrin_push_prompt_seen', 'true');
         setPushPromptResolved(true);
-        // Retiramos o setShowPushPrompt(false) daqui, pois o Modal vai fechar sozinho após mostrar o ✅
       }
-      
-      // 3. Devolve a resposta para o Modal saber qual tela mostrar (Sucesso ou Erro)
       return success;
     }
     return false;
@@ -244,27 +301,101 @@ export function ShoppingList() {
     setPushPromptResolved(true);
   };
 
+  // ================= AÇÕES DA LISTA RÁPIDA =================
+  const handleStartQuickListCreation = () => {
+    setShowListSwitcherMenu(false);
+    if (userPrefs?.tutorial_state?.quick_list_intro !== 'done') {
+      setShowQuickIntro(true);
+    } else {
+      setQuickListNameInput('');
+      setShowCreateQuick(true);
+    }
+  };
+
+  const handleConfirmQuickIntro = async () => {
+    if (user) {
+      await preferenceService.markTutorialAsDone(user.id, 'quick_list_intro');
+      setUserPrefs((prev: any) => ({ ...prev, tutorial_state: { ...prev.tutorial_state, quick_list_intro: 'done' }}));
+    }
+    setShowQuickIntro(false);
+    setQuickListNameInput('');
+    setShowCreateQuick(true);
+  };
+
+  const handleCreateQuickList = async () => {
+    if (!homeId || listActionLoading) return;
+    setListActionLoading(true);
+    const finalName = quickListNameInput.trim() || 'Lista Rápida';
+    try {
+      const id = await itemService.createQuickList(homeId, finalName);
+      setQuickList({ id, name: finalName });
+      setSelectedListId(id);
+      setShowCreateQuick(false);
+    } catch (error: any) {
+      if (error.code === '23505') {
+        const existing = await itemService.getActiveQuickList(homeId);
+        if (existing) {
+          setQuickList(existing);
+          setSelectedListId(existing.id);
+          setShowCreateQuick(false);
+        }
+      } else {
+        alert("Erro ao criar lista rápida. Tente novamente.");
+      }
+    } finally {
+      setListActionLoading(false);
+    }
+  };
+
+  const handleRenameQuickList = async () => {
+    if (!quickList || listActionLoading) return;
+    setListActionLoading(true);
+    const finalName = quickListNameInput.trim() || 'Lista Rápida';
+    try {
+      await itemService.renameQuickList(quickList.id, finalName);
+      setQuickList({ ...quickList, name: finalName });
+      setShowRenameQuick(false);
+    } catch (e) {
+      alert("Erro ao renomear lista.");
+    } finally {
+      setListActionLoading(false);
+    }
+  };
+
+  const handleDeleteQuickList = async () => {
+    if (!quickList || listActionLoading) return;
+    setListActionLoading(true);
+    try {
+      await itemService.deleteQuickList(quickList.id);
+      saveMarketSession(quickList.id, false); // Limpa mercado
+      setQuickList(null);
+      setSelectedListId(mainListId);
+      setShowDeleteQuick(false);
+    } catch (e) {
+      alert("Erro ao excluir. Verifique se você é Administrador.");
+    } finally {
+      setListActionLoading(false);
+    }
+  };
+
   const handleToggleMarketMode = () => {
     if (!isMarketMode) {
       const seenTutorial = localStorage.getItem('carrin_market_tutorial_seen');
       if (!seenTutorial) { setShowTutorial(true); return; }
-      setIsMarketMode(true);
+      saveMarketSession(selectedListId!, true);
     } else {
-      setIsMarketMode(false);
+      saveMarketSession(selectedListId!, false);
     }
   };
 
   const handleCancelMarketSession = () => {
-    setIsMarketMode(false);
-    setHasActiveMarketSession(false);
-    localStorage.removeItem('carrin_is_market_mode');
-    localStorage.removeItem('carrin_market_session_active');
+    if (selectedListId) saveMarketSession(selectedListId, false);
   };
 
   const confirmTutorialAndEnter = () => {
     localStorage.setItem('carrin_market_tutorial_seen', 'true');
     setShowTutorial(false);
-    setIsMarketMode(true);
+    saveMarketSession(selectedListId!, true);
   };
 
   const handleToggle = async (item: any) => {
@@ -349,13 +480,14 @@ export function ShoppingList() {
       const timerId = setTimeout(() => setUndoDelete(null), 5000);
       setUndoDelete({ item: itemToDelete, timerId });
 
-      // 3. NOVO: Notificação Totalmente Isolada
+      // 3. NOVO: Notificação Totalmente Isolada agora passa a Lista atual
       if (homeId) {
         try {
           await supabase.rpc('notify_items_removed', {
             p_count: 1,
             p_home_id: homeId,
-            p_item_name: itemToDelete.name
+            p_item_name: itemToDelete.name,
+            p_shopping_list_id: selectedListId
           });
         } catch (notifyError) {
           console.error('ITEM_REMOVED_NOTIFICATION_ERROR:', notifyError);
@@ -376,8 +508,20 @@ export function ShoppingList() {
     const item = undoDelete.item;
     setUndoDelete(null);
     try {
-      const savedItem = await itemService.addItem({ name: item.name, quantity: item.quantity, unit: item.unit, observation: item.observation, category_id: item.category_id || '🛒 Mantimentos', home_id: homeId, created_by: item.created_by } as any);
-      if (savedItem) { setItems(prev => [savedItem, ...prev.filter(i => i.id !== savedItem.id)]); }
+      // Reinsere NA MESMA LISTA
+      const savedItem = await itemService.addItem({ 
+        name: item.name, 
+        quantity: item.quantity, 
+        unit: item.unit, 
+        observation: item.observation, 
+        category_id: item.category_id || '🛒 Mantimentos', 
+        home_id: homeId, 
+        shopping_list_id: item.shopping_list_id || selectedListId, 
+        created_by: item.created_by 
+      });
+      if (savedItem && selectedListId === (item.shopping_list_id || selectedListId)) { 
+        setItems(prev => [savedItem, ...prev.filter(i => i.id !== savedItem.id)]); 
+      }
       setToastMsg('Item restaurado');
       setTimeout(() => setToastMsg(null), 3000);
     } catch (error) {
@@ -386,19 +530,19 @@ export function ShoppingList() {
   };
 
   const handleClearList = async () => {
-    if (!activeListId || clearingList) return;
+    if (!selectedListId || clearingList) return;
     
     const snapshot = [...items];
     setClearingList(true);
     
     try {
       // 1. FLUXO ANTIGO PRESERVADO
-      await itemService.clearActiveList(activeListId);
+      await itemService.clearList(selectedListId);
       
       setItems([]);
       if (undoClear?.timerId) clearTimeout(undoClear.timerId);
       const timerId = setTimeout(() => setUndoClear(null), 5000);
-      setUndoClear({ items: snapshot, timerId });
+      setUndoClear({ items: snapshot, listId: selectedListId, timerId });
 
       // 2. NOVO: Notificação Isolada Agrupada
       if (homeId && snapshot.length > 0) {
@@ -406,7 +550,8 @@ export function ShoppingList() {
           await supabase.rpc('notify_items_removed', {
             p_count: snapshot.length,
             p_home_id: homeId,
-            p_item_name: null
+            p_item_name: null,
+            p_shopping_list_id: selectedListId
           });
         } catch (notifyError) {
           console.error('ITEM_REMOVED_NOTIFICATION_ERROR:', notifyError);
@@ -419,26 +564,41 @@ export function ShoppingList() {
     } finally {
       setClearingList(false);
       setShowClearConfirm(false);
-      setShowListMenu(false);
+      setShowListActionsMenu(false);
     }
   };
 
   const handleUndoClear = async () => {
     if (!undoClear || !homeId || !user) return;
     clearTimeout(undoClear.timerId);
-    const snapshot = undoClear.items;
+    const { items: snapshot, listId } = undoClear;
     setUndoClear(null);
     setToastMsg('Restaurando itens...');
     try {
-      const currentActive = await itemService.getItems(homeId);
+      const currentActive = await itemService.getItems(listId);
       const currentNames = currentActive.map(i => normalizeStr(i.name));
       const itemsToAdd = snapshot.filter(item => !currentNames.includes(normalizeStr(item.name)));
-      const restoredItems = await Promise.all(itemsToAdd.map(item => itemService.addItem({ name: item.name, quantity: item.quantity, unit: item.unit, observation: item.observation, category_id: item.category_id || '🛒 Mantimentos', home_id: homeId, created_by: item.created_by } as any)));
-      setItems(prev => {
-        const validRestored = restoredItems.filter(Boolean);
-        const restoredIds = validRestored.map(i => i.id);
-        return [...validRestored, ...prev.filter(i => !restoredIds.includes(i.id))];
-      });
+      
+      const restoredItems = await Promise.all(itemsToAdd.map(item => 
+        itemService.addItem({ 
+          name: item.name, 
+          quantity: item.quantity, 
+          unit: item.unit, 
+          observation: item.observation, 
+          category_id: item.category_id || '🛒 Mantimentos', 
+          home_id: homeId, 
+          shopping_list_id: listId,
+          created_by: item.created_by 
+        })
+      ));
+      
+      if (selectedListId === listId) {
+        setItems(prev => {
+          const validRestored = restoredItems.filter(Boolean);
+          const restoredIds = validRestored.map(i => i.id);
+          return [...validRestored, ...prev.filter(i => !restoredIds.includes(i.id))];
+        });
+      }
       setToastMsg('Lista restaurada ✓');
       setTimeout(() => setToastMsg(null), 3000);
     } catch (error) {
@@ -449,7 +609,7 @@ export function ShoppingList() {
   };
 
   const handleSaveItem = async (name: string, quantity: number | null, unit: string | null, observation: string, categoryId: string) => {
-    if (!homeId || !user) return;
+    if (!homeId || !user || !selectedListId) return;
     const formattedData = { name: name.trim(), quantity: quantity, unit: unit, observation: observation ? observation.trim() : undefined, category_id: categoryId || '🛒 Mantimentos' };
     if (editingItem) {
       setItems(items.map(i => i.id === editingItem.id ? { ...i, ...formattedData } : i));
@@ -461,7 +621,7 @@ export function ShoppingList() {
         if (isMarketMode) setSyncStatus('Sem conexão • pendente');
       }
     } else {
-      const newItem = { ...formattedData, home_id: homeId, created_by: user.id };
+      const newItem = { ...formattedData, home_id: homeId, shopping_list_id: selectedListId, created_by: user.id };
       const savedItem = await itemService.addItem(newItem as any);
       if (savedItem) { setItems(prev => [savedItem, ...prev.filter(i => i.id !== savedItem.id)]); }
     }
@@ -470,25 +630,31 @@ export function ShoppingList() {
   };
 
   const handleOpenFinishModal = () => {
-    if (!homeId || !activeListId) return;
+    if (!homeId || !selectedListId) return;
     setIsFinishModalOpen(true);
   };
 
   const handleConfirmFinishShopping = async (receiptUrls: string[], marketName?: string) => {
-    if (!homeId || !activeListId || finishing) return;
+    if (!homeId || !selectedListId || finishing) return;
     setFinishing(true);
     try {
-      const newListId = await historyService.finishActiveList(homeId, activeListId, totalEstimated, receiptUrls, marketName);
-      setActiveListId(newListId);
+      const newListId = await historyService.finishActiveList(homeId, selectedListId, totalEstimated, receiptUrls, marketName);
+      saveMarketSession(selectedListId, false);
+      
+      if (selectedListType === 'main' && newListId) {
+        setMainListId(newListId);
+        setSelectedListId(newListId);
+      } else {
+        setQuickList(null);
+        setSelectedListId(mainListId);
+      }
       setItems([]);
     } catch (error) {
       console.error("Erro ao finalizar compra:", error);
       alert("Houve um erro ao salvar o histórico, mas sua lista foi concluída.");
     } finally {
       setIsMarketMode(false);
-      setHasActiveMarketSession(false);
-      localStorage.removeItem('carrin_is_market_mode');
-      localStorage.removeItem('carrin_market_session_active');
+      setIsFinishModalOpen(false);
       setFinishing(false);
     }
   };
@@ -635,8 +801,53 @@ export function ShoppingList() {
         )}
 
         <div className="p-6 pb-2">
-          <div className="flex justify-between items-center mb-4">
-            <div><h1 className="text-2xl font-bold text-carrin-dark">Sua Lista</h1><p className="text-gray-500 text-sm">{isMarketMode ? 'Executando compras no corredor' : 'Compras da Casa'}</p></div>
+          {/* HEADER PRINCIPAL COM O MENU 1 (LISTA RÁPIDA) */}
+          <div className="flex justify-between items-start mb-4">
+            <div className="flex-1 relative">
+              <div className="flex items-center gap-1 mb-0.5">
+                {selectedListType === 'quick' && (
+                  <button onClick={() => setSelectedListId(mainListId)} className="mr-1 p-1 text-gray-400 hover:text-carrin-dark rounded-full transition-colors"><ChevronLeft size={22} /></button>
+                )}
+                <h1 className="text-2xl font-bold text-carrin-dark truncate max-w-[200px]">
+                  {selectedListType === 'quick' ? (quickList?.name || 'Lista Rápida') : 'Sua Lista'}
+                </h1>
+                
+                {/* MENU 1: TÍTULO */}
+                <button onClick={() => { setShowListSwitcherMenu(!showListSwitcherMenu); setShowListActionsMenu(false); }} className="ml-1 p-1 text-gray-400 hover:text-carrin-dark rounded-full hover:bg-gray-100 transition-colors shrink-0">
+                  <MoreVertical size={20} />
+                </button>
+
+                {showListSwitcherMenu && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setShowListSwitcherMenu(false)} />
+                    <div className="absolute left-0 top-[36px] w-56 bg-white rounded-card shadow-xl border border-gray-100 z-50 py-1 animate-in fade-in slide-in-from-top-2">
+                      {selectedListType === 'main' ? (
+                        <>
+                          {!quickList ? (
+                            <button onClick={handleStartQuickListCreation} className="w-full text-left px-4 py-3 text-sm font-bold text-gray-700 hover:bg-gray-50 flex items-center gap-2"><PlusCircle size={16}/> Criar lista rápida</button>
+                          ) : (
+                            <button onClick={() => { setSelectedListId(quickList.id); setShowListSwitcherMenu(false); }} className="w-full text-left px-4 py-3 text-sm font-bold text-emerald-700 hover:bg-emerald-50 flex items-center gap-2"><ShoppingCart size={16}/> Abrir "{quickList.name || 'Lista Rápida'}"</button>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <button onClick={() => { setSelectedListId(mainListId); setShowListSwitcherMenu(false); }} className="w-full text-left px-4 py-3 text-sm font-bold text-gray-700 hover:bg-gray-50 flex items-center gap-2"><ChevronLeft size={16}/> Voltar para Sua Lista</button>
+                          <button onClick={() => { setShowListSwitcherMenu(false); setQuickListNameInput(quickList?.name || ''); setShowRenameQuick(true); }} className="w-full text-left px-4 py-3 text-sm font-bold text-gray-700 hover:bg-gray-50 flex items-center gap-2"><Edit2 size={16}/> Renomear lista rápida</button>
+                          {(userRole === 'owner' || userRole === 'admin') && (
+                            <>
+                              <div className="h-px bg-gray-100 my-1" />
+                              <button onClick={() => { setShowListSwitcherMenu(false); setShowDeleteQuick(true); }} className="w-full text-left px-4 py-3 text-sm font-bold text-red-600 hover:bg-red-50 flex items-center gap-2 bg-red-50/50"><AlertCircle size={16}/> Excluir lista rápida</button>
+                            </>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+              <p className="text-gray-500 text-sm">{isMarketMode ? 'Executando compras no corredor' : (selectedListType === 'quick' ? 'Lista rápida da Casa' : 'Compras da Casa')}</p>
+            </div>
+
             <div className="flex items-center gap-3">
               <NotificationBell />
               <button ref={(el) => registerElement('btn-market-mode', el)} onClick={handleToggleMarketMode} className={`px-3.5 py-2.5 rounded-small text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm ${isMarketMode ? 'bg-emerald-600 text-white ring-2 ring-emerald-300' : 'bg-white text-carrin-dark border border-gray-200 hover:border-carrin-primary'}`}><ShoppingCart size={16} /><span>{isMarketMode ? 'Sair do Modo Mercado' : 'Modo Mercado'}</span></button>
@@ -677,12 +888,13 @@ export function ShoppingList() {
               
               {!isMarketMode && (
                 <div className="relative shrink-0">
-                  <button onClick={() => setShowListMenu(!showListMenu)} className="w-[42px] h-[42px] flex items-center justify-center bg-white border border-gray-100 rounded-small text-gray-500 hover:text-carrin-dark hover:border-carrin-primary transition-colors shadow-sm"><MoreVertical size={20} /></button>
-                  {showListMenu && (
+                  {/* MENU 2: ORIGINAL (CATEGORIAS) */}
+                  <button onClick={() => { setShowListActionsMenu(!showListActionsMenu); setShowListSwitcherMenu(false); }} className="w-[42px] h-[42px] flex items-center justify-center bg-white border border-gray-100 rounded-small text-gray-500 hover:text-carrin-dark hover:border-carrin-primary transition-colors shadow-sm"><MoreVertical size={20} /></button>
+                  {showListActionsMenu && (
                     <>
-                      <div className="fixed inset-0 z-40" onClick={() => setShowListMenu(false)} />
+                      <div className="fixed inset-0 z-40" onClick={() => setShowListActionsMenu(false)} />
                       <div className="absolute right-0 top-[50px] mt-1 w-44 bg-white rounded-card shadow-xl border border-gray-100 z-50 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
-                        <button onClick={() => { setShowListMenu(false); setShowClearConfirm(true); }} className="w-full text-left px-4 py-3 text-sm font-bold text-red-600 hover:bg-red-50 transition-colors">Limpar lista</button>
+                        <button onClick={() => { setShowListActionsMenu(false); setShowClearConfirm(true); }} className="w-full text-left px-4 py-3 text-sm font-bold text-red-600 hover:bg-red-50 transition-colors">Limpar lista</button>
                       </div>
                     </>
                   )}
@@ -697,7 +909,8 @@ export function ShoppingList() {
             <p className="text-center text-gray-400 py-10">Carregando itens...</p>
           ) : items.length === 0 ? (
             <div className="text-center py-12 bg-white rounded-card shadow-sm p-6 animate-in fade-in zoom-in duration-300">
-              <p className="text-gray-400 mb-2 font-bold text-sm">Sua lista está vazia.</p><p className="text-xs text-gray-400">{emptyMessage}</p>
+              <p className="text-gray-400 mb-2 font-bold text-sm">{selectedListType === 'quick' ? 'Sua Lista Rápida está vazia.' : 'Sua lista está vazia.'}</p>
+              <p className="text-xs text-gray-400">{selectedListType === 'quick' ? 'Adicione itens para começar o churrasco.' : emptyMessage}</p>
             </div>
           ) : searchedItems.length === 0 ? (
             <div className="text-center py-10"><p className="text-gray-400 text-sm">Nenhum item encontrado para "{searchQuery}".</p></div>
@@ -826,6 +1039,72 @@ export function ShoppingList() {
           </div>
         );
       })()}
+
+      {/* MODAIS DA LISTA RÁPIDA (NOVOS) */}
+      {showQuickIntro && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60] p-4 animate-in fade-in duration-200">
+          <div className="bg-white w-full max-w-sm rounded-card p-6 shadow-2xl animate-in zoom-in-95 duration-200">
+            <h3 className="text-xl font-extrabold text-carrin-dark mb-3">Lista Rápida</h3>
+            <p className="text-sm text-gray-600 mb-5 leading-relaxed">
+              Crie uma lista separada para aquele churrasco, festa ou compra inesperada.
+            </p>
+            
+            <ul className="text-sm text-gray-500 mb-6 space-y-3 pl-1 font-medium">
+              <li className="flex gap-2 items-start"><Check size={16} className="text-emerald-500 shrink-0 mt-0.5" /> Não mistura com os itens da Casa.</li>
+              <li className="flex gap-2 items-start"><Check size={16} className="text-emerald-500 shrink-0 mt-0.5" /> Possui Modo Mercado e Histórico próprios.</li>
+              <li className="flex gap-2 items-start"><Check size={16} className="text-emerald-500 shrink-0 mt-0.5" /> Todos os moradores podem acessar.</li>
+            </ul>
+
+            <div className="flex flex-col gap-2">
+              <button onClick={handleConfirmQuickIntro} className="w-full bg-carrin-primary text-white py-3.5 rounded-button font-bold text-sm shadow hover:opacity-90 transition-all">
+                Criar lista rápida
+              </button>
+              <button onClick={() => setShowQuickIntro(false)} className="w-full text-gray-500 py-3 rounded-button font-bold text-sm hover:bg-gray-50 transition-colors">
+                Agora não
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showCreateQuick && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60] p-4">
+          <div className="bg-white w-full max-w-sm rounded-card p-6 shadow-2xl animate-in zoom-in-95">
+            <h3 className="text-lg font-bold text-carrin-dark mb-4">Nova lista rápida</h3>
+            <input type="text" placeholder="Ex.: Churrasco, Festa, Viagem" value={quickListNameInput} onChange={(e) => setQuickListNameInput(e.target.value)} autoFocus className="w-full p-3 bg-gray-50 border border-gray-200 rounded-small text-sm focus:outline-none focus:border-emerald-600 mb-6" />
+            <div className="flex gap-2">
+              <button onClick={() => setShowCreateQuick(false)} disabled={listActionLoading} className="w-1/2 bg-gray-100 text-gray-600 py-3.5 rounded-button font-bold text-sm hover:bg-gray-200">Cancelar</button>
+              <button onClick={handleCreateQuickList} disabled={listActionLoading} className="w-full bg-emerald-600 text-white py-3.5 rounded-button font-bold text-sm shadow hover:bg-emerald-700">{listActionLoading ? 'Criando...' : 'Criar Lista'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showRenameQuick && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60] p-4">
+          <div className="bg-white w-full max-w-sm rounded-card p-6 shadow-2xl animate-in zoom-in-95">
+            <h3 className="text-lg font-bold text-carrin-dark mb-4">Renomear lista</h3>
+            <input type="text" value={quickListNameInput} onChange={(e) => setQuickListNameInput(e.target.value)} autoFocus className="w-full p-3 bg-gray-50 border border-gray-200 rounded-small text-sm focus:outline-none focus:border-emerald-600 mb-6" />
+            <div className="flex gap-2">
+              <button onClick={() => setShowRenameQuick(false)} disabled={listActionLoading} className="w-1/2 bg-gray-100 text-gray-600 py-3.5 rounded-button font-bold text-sm hover:bg-gray-200">Cancelar</button>
+              <button onClick={handleRenameQuickList} disabled={listActionLoading} className="w-full bg-emerald-600 text-white py-3.5 rounded-button font-bold text-sm shadow hover:bg-emerald-700">{listActionLoading ? 'Salvando...' : 'Salvar'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showDeleteQuick && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60] p-4">
+          <div className="bg-white w-full max-w-sm rounded-card p-6 shadow-2xl animate-in zoom-in-95">
+            <div className="flex items-center gap-2 text-red-600 mb-3"><AlertCircle size={28} /><h3 className="text-xl font-extrabold text-carrin-dark">Excluir lista rápida?</h3></div>
+            <p className="text-sm text-gray-600 mb-6">Os itens desta lista serão removidos da sua rotina e ela não será registrada no Histórico como uma compra concluída.</p>
+            <div className="flex gap-2">
+              <button onClick={() => setShowDeleteQuick(false)} disabled={listActionLoading} className="w-1/2 bg-gray-100 text-gray-600 py-3.5 rounded-button font-bold text-sm hover:bg-gray-200">Cancelar</button>
+              <button onClick={handleDeleteQuickList} disabled={listActionLoading} className="w-full bg-red-600 text-white py-3.5 rounded-button font-bold text-sm shadow hover:bg-red-700">{listActionLoading ? 'Excluindo...' : 'Excluir lista'}</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <AddItemModal isOpen={isModalOpen} onClose={() => { setIsModalOpen(false); setEditingItem(null); }} onSave={handleSaveItem} initialData={editingItem} existingItems={items} homePreferences={homePreferences} onGoToExisting={(item) => { setIsModalOpen(false); setEditingItem(null); setSearchQuery(item.name); }} />
       <FinishShoppingModal isOpen={isFinishModalOpen} onClose={() => setIsFinishModalOpen(false)} onConfirm={handleConfirmFinishShopping} totalAmount={totalEstimated} totalItems={completedItems.length} loading={finishing} />

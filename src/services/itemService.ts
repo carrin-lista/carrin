@@ -1,160 +1,157 @@
 import { supabase } from './supabase';
 
-export interface NewItemDTO {
-  name: string;
-  quantity?: number | null;
-  unit?: string | null;
-  category_id?: string;
-  observation?: string;
-  home_id: string;
-  created_by: string;
-}
-
 export const itemService = {
-  async getActiveListId(homeId: string): Promise<string> {
-    const { data: existingList } = await supabase
+  // Busca especificamente a Lista Principal Ativa
+  async getActiveMainListId(homeId: string): Promise<string | null> {
+    const { data, error } = await supabase
       .from('shopping_lists')
       .select('id')
       .eq('home_id', homeId)
+      .eq('list_type', 'main')
       .eq('status', 'active')
       .maybeSingle();
-
-    if (existingList) return existingList.id;
-
-    const { data: newList, error: createError } = await supabase
-      .from('shopping_lists')
-      .insert([{ home_id: homeId, status: 'active' }])
-      .select('id')
-      .single();
-
-    if (createError) throw createError;
-    return newList.id;
+      
+    if (error) throw error;
+    return data?.id || null;
   },
 
-  async getItems(homeId: string) {
-    const listId = await this.getActiveListId(homeId);
+  // Busca especificamente a Lista Rápida Ativa
+  async getActiveQuickList(homeId: string): Promise<{ id: string, name: string | null } | null> {
+    const { data, error } = await supabase
+      .from('shopping_lists')
+      .select('id, name')
+      .eq('home_id', homeId)
+      .eq('list_type', 'quick')
+      .eq('status', 'active')
+      .maybeSingle();
+      
+    // Ignora erro de "nenhuma linha encontrada", pois é normal não ter Quick list
+    if (error && error.code !== 'PGRST116') throw error; 
+    return data || null;
+  },
 
+  // Cria a Quick List e devolve o ID (Trata concorrência 23505)
+  async createQuickList(homeId: string, name: string | null): Promise<string> {
+    const { data, error } = await supabase
+      .from('shopping_lists')
+      .insert({ home_id: homeId, list_type: 'quick', status: 'active', name })
+      .select('id')
+      .single();
+      
+    if (error) {
+      if (error.code === '23505') throw error; // UNIQUE violation: capturado pelo frontend para abrir a lista existente
+      throw error;
+    }
+    return data.id;
+  },
+
+  // Renomeia a Lista Rápida
+  async renameQuickList(listId: string, name: string) {
+    const { error } = await supabase
+      .from('shopping_lists')
+      .update({ name })
+      .eq('id', listId);
+    if (error) throw error;
+  },
+
+  // Exclui a Lista Rápida usando a RPC atômica
+  async deleteQuickList(listId: string) {
+    const { error } = await supabase.rpc('delete_quick_list', { p_list_id: listId });
+    if (error) throw error;
+  },
+
+  // Busca os itens APENAS da lista selecionada
+  async getItems(shoppingListId: string) {
     const { data, error } = await supabase
       .from('shopping_items')
-      .select('*, users:created_by(id, full_name, username, avatar_url)')
-      .eq('shopping_list_id', listId)
+      .select(`
+        *,
+        users!shopping_items_created_by_fkey (
+          username,
+          full_name,
+          avatar_url
+        )
+      `)
+      .eq('shopping_list_id', shoppingListId)
       .order('created_at', { ascending: false });
 
     if (error) throw error;
     return data || [];
   },
 
-  async addItem(item: Omit<NewItemDTO, 'shopping_list_id'>) {
-    const shoppingListId = await this.getActiveListId(item.home_id);
-
+  // Adiciona um item EXIGINDO shopping_list_id e home_id no objeto itemData
+  async addItem(itemData: any) {
     const { data, error } = await supabase
       .from('shopping_items')
-      .insert([{
-        ...item,
-        shopping_list_id: shoppingListId
-      }])
-      .select('*, users:created_by(id, full_name, username, avatar_url)')
+      .insert(itemData)
+      .select(`
+        *,
+        users!shopping_items_created_by_fkey (
+          username,
+          full_name,
+          avatar_url
+        )
+      `)
       .single();
 
     if (error) throw error;
     return data;
   },
 
-  async toggleItemCompletion(itemId: string, isCompleted: boolean, price?: number, unitPrice?: number, boughtQuantity?: number) {
-    const updateData: any = { 
-      is_completed: isCompleted, 
-      updated_at: new Date().toISOString() 
-    };
-
-    if (price !== undefined) updateData.price = price;
-    if (unitPrice !== undefined) updateData.unit_price = unitPrice;
-    if (boughtQuantity !== undefined) updateData.bought_quantity = boughtQuantity;
-
+  async toggleItemCompletion(itemId: string, isCompleted: boolean, price: number, unitPrice: number, boughtQuantity: number) {
     const { error } = await supabase
       .from('shopping_items')
-      .update(updateData)
+      .update({ 
+        is_completed: isCompleted,
+        price: price,
+        unit_price: unitPrice,
+        bought_quantity: boughtQuantity
+      })
       .eq('id', itemId);
 
     if (error) throw error;
   },
 
-  // 1. Exclusão Original e Desacoplada
-  async deleteItem(itemId: string, homeId?: string, itemName?: string) {
+  async updateItem(itemId: string, updates: any) {
+    const { error } = await supabase
+      .from('shopping_items')
+      .update(updates)
+      .eq('id', itemId);
+
+    if (error) throw error;
+  },
+
+  // Exclusão física do item
+  async deleteItem(itemId: string) {
     const { error } = await supabase
       .from('shopping_items')
       .delete()
       .eq('id', itemId);
 
     if (error) throw error;
-
-    if (homeId && itemName) {
-      supabase.rpc('notify_items_removed', { 
-        p_count: 1, 
-        p_home_id: homeId, 
-        p_item_name: itemName 
-      }).then(({ error }) => {
-        if (error) console.error(error);
-      });
-    }
   },
 
-  // 2. Limpar Lista Original e Desacoplada
-  async clearActiveList(shoppingListId: string, homeId?: string, itemCount?: number) {
+  // Limpeza de itens APENAS da lista selecionada
+  async clearList(shoppingListId: string) {
     const { error } = await supabase
       .from('shopping_items')
       .delete()
       .eq('shopping_list_id', shoppingListId);
 
     if (error) throw error;
-
-    if (homeId && itemCount && itemCount > 0) {
-      supabase.rpc('notify_items_removed', { 
-        p_count: itemCount, 
-        p_home_id: homeId, 
-        p_item_name: null 
-      }).then(({ error }) => {
-        if (error) console.error(error);
-      });
-    }
-  }, // <--- ESSA CHAVE COM VÍRGULA SUMIU!
-
-  async updateItem(itemId: string, updates: { name?: string; quantity?: number | null; unit?: string | null; observation?: string; category_id?: string }) {
-    const { error } = await supabase
-      .from('shopping_items')
-      .update({ ...updates, updated_at: new Date().toISOString() })
-      .eq('id', itemId);
-
-    if (error) throw error;
   },
 
+  // Sugestões continuam sendo da Casa inteira
   async getRecentItemSuggestions(homeId: string, query: string) {
-    if (!query || query.trim().length < 2) return [];
-
     const { data, error } = await supabase
       .from('shopping_items')
-      .select('name, quantity, unit, price, unit_price, bought_quantity')
+      .select('name, category_id, unit, observation')
       .eq('home_id', homeId)
-      .eq('is_completed', true)
-      .ilike('name', `%${query.trim()}%`)
-      .order('updated_at', { ascending: false })
-      .limit(20);
+      .ilike('name', `%${query}%`)
+      .order('created_at', { ascending: false })
+      .limit(10);
 
-    if (error) {
-      console.error("Erro ao buscar sugestões:", error);
-      return [];
-    }
-
-    const uniqueItems: any[] = [];
-    const seen = new Set();
-
-    for (const item of data || []) {
-      const normalized = item.name.trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-      if (!seen.has(normalized)) {
-        seen.add(normalized);
-        uniqueItems.push(item);
-      }
-    }
-
-    return uniqueItems.slice(0, 4);
+    if (error) throw error;
+    return data || [];
   }
 };

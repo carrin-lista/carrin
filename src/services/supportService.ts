@@ -21,7 +21,8 @@ export const supportService = {
         category,
         subject,
         description,
-        status: 'open'
+        status: 'open',
+        waiting_support: true // JÁ INICIA NA FILA DO CONSOLE
       }])
       .select()
       .single();
@@ -35,6 +36,8 @@ export const supportService = {
       .from('support_ticket_messages')
       .select('*')
       .eq('ticket_id', ticketId)
+      // Filtramos para o usuário não ver notas internas dos admins
+      .eq('is_internal', false) 
       .order('created_at', { ascending: true });
 
     if (error) throw error;
@@ -49,17 +52,18 @@ export const supportService = {
         ticket_id: ticketId,
         sender_user_id: userId,
         message,
-        is_internal: false // Segurança extra no frontend, embora a RLS já trave isso
+        is_internal: false
       }]);
 
     if (insertError) throw insertError;
 
-    // Atualiza o updated_at e last_message_at do ticket para ele subir na lista do Console
+    // Atualiza o ticket para alertar a Badge no Console de Admin
     const { error: updateError } = await supabase
       .from('support_tickets')
       .update({ 
         updated_at: new Date().toISOString(),
-        last_message_at: new Date().toISOString()
+        last_message_at: new Date().toISOString(),
+        waiting_support: true // <--- ADICIONADO: VOLTA PRA FILA
       })
       .eq('id', ticketId);
 

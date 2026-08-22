@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { supportService } from '../../services/supportService';
+import { supabase } from '../../services/supabase';
 import { ChevronLeft, Plus, Send, Clock, CheckCircle, MessageSquare, AlertCircle } from 'lucide-react';
 
 interface SupportProps {
@@ -38,17 +39,55 @@ export function Support({ onBack }: SupportProps) {
   // Form Chat
   const [newMessage, setNewMessage] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  
+  // 🚀 NOVO: Estados de Digitação
+  const [adminTyping, setAdminTyping] = useState(false);
+  const typingTimeoutRef = useRef<NodeJS.Timeout>();
 
   useEffect(() => {
     if (view === 'list') loadTickets();
-    if (view === 'chat' && selectedTicket) loadMessages();
+    
+    if (view === 'chat' && selectedTicket) {
+      loadMessages();
+
+      // 🚀 INÍCIO DO REALTIME (POSTGRES + BROADCAST)
+      const channel = supabase.channel(`ticket_${selectedTicket.id}`)
+        // 1. Ouve novas respostas da equipe no banco
+        .on(
+          'postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'support_ticket_messages', filter: `ticket_id=eq.${selectedTicket.id}` },
+          () => {
+            loadMessages();
+          }
+        )
+        // 2. Ouve o Broadcast de Digitação do Admin
+        .on(
+          'broadcast',
+          { event: 'admin_typing' },
+          (payload) => {
+            if (payload.payload.isTyping) {
+              setAdminTyping(true);
+              clearTimeout(typingTimeoutRef.current);
+              typingTimeoutRef.current = setTimeout(() => setAdminTyping(false), 3000);
+            } else {
+              setAdminTyping(false);
+            }
+          }
+        )
+        .subscribe();
+
+      return () => {
+        supabase.removeChannel(channel);
+        clearTimeout(typingTimeoutRef.current);
+      };
+    }
   }, [view, selectedTicket]);
 
   useEffect(() => {
     if (view === 'chat') {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [messages]);
+  }, [messages, adminTyping]); // Atualiza o scroll também quando o "digitando..." aparece
 
   const loadTickets = async () => {
     if (!user) return;
@@ -99,6 +138,13 @@ export function Support({ onBack }: SupportProps) {
     const messageText = newMessage.trim();
     setNewMessage(''); // Otimismo na UI
     
+    // Dispara que parou de digitar ao enviar
+    supabase.channel(`ticket_${selectedTicket.id}`).send({
+      type: 'broadcast',
+      event: 'typing',
+      payload: { isTyping: false }
+    });
+    
     // Adiciona temporariamente na tela
     setMessages(prev => [...prev, { id: 'temp', message: messageText, sender_user_id: user.id, created_at: new Date().toISOString() }]);
 
@@ -109,6 +155,19 @@ export function Support({ onBack }: SupportProps) {
       console.error(error);
       alert('Erro ao enviar mensagem.');
       loadMessages(); // Reverte a mensagem temporária em caso de erro
+    }
+  };
+
+  // 🚀 NOVO: Função para avisar o console que o cliente está digitando
+  const handleTyping = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setNewMessage(e.target.value);
+    
+    if (selectedTicket) {
+      supabase.channel(`ticket_${selectedTicket.id}`).send({
+        type: 'broadcast',
+        event: 'typing',
+        payload: { isTyping: e.target.value.length > 0 }
+      });
     }
   };
 
@@ -271,6 +330,15 @@ export function Support({ onBack }: SupportProps) {
                 )
               })
             )}
+            
+            {/* 🚀 NOVO: UI DE DIGITANDO */}
+            {adminTyping && (
+              <div className="flex items-start">
+                <span className="text-[10px] text-gray-500 italic bg-gray-50 px-3 py-1.5 rounded-full border border-gray-100 animate-pulse">
+                  Equipe Carrin está digitando...
+                </span>
+              </div>
+            )}
             <div ref={messagesEndRef} />
           </div>
 
@@ -280,7 +348,7 @@ export function Support({ onBack }: SupportProps) {
                 type="text"
                 placeholder="Escreva uma mensagem..."
                 value={newMessage}
-                onChange={(e) => setNewMessage(e.target.value)}
+                onChange={handleTyping} // <--- SUBSTITUÍDO: Agora chama o broadcast
                 className="flex-1 bg-gray-50 border border-gray-200 rounded-full px-4 py-2.5 text-sm outline-none focus:border-emerald-600"
               />
               <button 

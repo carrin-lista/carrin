@@ -1,18 +1,20 @@
 import { useState, useEffect } from 'react';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { supabase } from '../../services/supabase';
-import { ChevronLeft, CreditCard, Lock, Check, AlertCircle, Tag } from 'lucide-react';
+import { ChevronLeft, CreditCard, Lock, Check, AlertCircle, Tag, X } from 'lucide-react';
 
 export function Checkout({ onBack }: { onBack: () => void }) {
   const { user, homeId } = useAuthStore();
   
   const [loading, setLoading] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-
-  // Estado para guardar a oferta customizada pendente, se houver
   const [pendingOffer, setPendingOffer] = useState<any>(null);
 
-  // Estados do formulário
+  // 🚀 MARKETING: Estados do Cupom
+  const [couponInput, setCouponInput] = useState('');
+  const [appliedCoupon, setAppliedCoupon] = useState<any>(null);
+  const [validatingCoupon, setValidatingCoupon] = useState(false);
+
   const [cardName, setCardName] = useState('');
   const [cardNumber, setCardNumber] = useState('');
   const [expiry, setExpiry] = useState('');
@@ -21,37 +23,36 @@ export function Checkout({ onBack }: { onBack: () => void }) {
   const [cep, setCep] = useState('');
   const [addressNumber, setAddressNumber] = useState('');
 
-  // Busca se existe oferta customizada pendente para esta casa ao abrir a tela
   useEffect(() => {
     async function fetchOffer() {
       if (!homeId) return;
       try {
-        const { data } = await supabase
-          .from('custom_offers')
-          .select('*')
-          .eq('home_id', homeId)
-          .eq('status', 'PENDING')
-          .single();
-        
-        if (data) {
-          setPendingOffer(data);
-        }
-      } catch (error) {
-        // Sem ofertas customizadas pendentes, segue o fluxo normal padrão
-      }
+        const { data } = await supabase.from('custom_offers').select('*').eq('home_id', homeId).eq('status', 'PENDING').single();
+        if (data) setPendingOffer(data);
+      } catch (error) {}
     }
     fetchOffer();
   }, [homeId]);
+
+  // 🚀 MARKETING: Tenta aplicar o cupom do parceiro automaticamente se houver indicação
+  useEffect(() => {
+    async function autoApplyCoupon() {
+      if (!user || pendingOffer) return;
+      try {
+        const { data } = await supabase.rpc('get_user_referral_coupon');
+        if (data && data.valid) setAppliedCoupon(data);
+      } catch (err) {}
+    }
+    autoApplyCoupon();
+  }, [user, pendingOffer]);
 
   const showFeedback = (type: 'success' | 'error', text: string) => {
     setFeedback({ type, text });
     setTimeout(() => setFeedback(null), 5000);
   };
 
-  // Máscaras simples
   const handleCardNumber = (e: React.ChangeEvent<HTMLInputElement>) => {
-    let value = e.target.value.replace(/\D/g, '');
-    value = value.replace(/(\d{4})/g, '$1 ').trim();
+    let value = e.target.value.replace(/\D/g, '').replace(/(\d{4})/g, '$1 ').trim();
     setCardNumber(value.substring(0, 19));
   };
 
@@ -77,27 +78,47 @@ export function Checkout({ onBack }: { onBack: () => void }) {
     setCep(value);
   };
 
+  // 🚀 MARKETING: Validação Manual do Cupom no Banco
+  const handleApplyCoupon = async () => {
+    if (!couponInput.trim()) return;
+    setValidatingCoupon(true);
+    try {
+      const { data, error } = await supabase.rpc('validate_marketing_coupon', { p_code: couponInput.trim() });
+      if (error) throw error;
+      
+      if (!data.valid) {
+        showFeedback('error', data.error || 'Cupom inválido.');
+        setAppliedCoupon(null);
+      } else {
+        setAppliedCoupon(data);
+        setCouponInput('');
+        showFeedback('success', `Cupom ${data.code} aplicado com sucesso!`);
+      }
+    } catch (err) {
+      showFeedback('error', 'Erro ao validar cupom.');
+    } finally {
+      setValidatingCoupon(false);
+    }
+  };
+
   const handleCheckout = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || !homeId) return;
 
     setLoading(true);
     try {
-      // 1. Pega a sessão atual para o JWT
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error("Sessão expirada.");
 
-      // 2. Prepara os dados de validade (Trata formatos MM/AA e MM/AAAA)
       const [expMonth, expYearRaw] = expiry.split('/');
       const expYear = expYearRaw.length === 2 ? `20${expYearRaw}` : expYearRaw;
-
-      // 3. Busca o telefone do usuário no profile (opcional)
       const { data: profile } = await supabase.from('users').select('phone').eq('id', user.id).single();
 
-      // 4. Monta o Payload incluindo o offer_id caso haja oferta customizada válida
+      // 🚀 MARKETING: O Código do Cupom vai injetado no Payload para a Edge Function processar!
       const payload = {
         home_id: homeId,
         offer_id: pendingOffer ? pendingOffer.id : null,
+        coupon_code: appliedCoupon ? appliedCoupon.code : null,
         creditCard: {
           holderName: cardName.trim(),
           number: cardNumber.replace(/\D/g, ''),
@@ -115,7 +136,6 @@ export function Checkout({ onBack }: { onBack: () => void }) {
         }
       };
 
-      // 5. Envia para a Edge Function de forma segura (HTTPS)
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || ''; 
       const response = await fetch(`${supabaseUrl}/functions/v1/asaas-checkout`, {
         method: 'POST',
@@ -127,17 +147,10 @@ export function Checkout({ onBack }: { onBack: () => void }) {
       });
 
       const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(result.error || "Erro ao processar pagamento.");
-      }
+      if (!response.ok) throw new Error(result.error || "Erro ao processar pagamento.");
 
       showFeedback('success', 'Pagamento em processamento! Seu acesso será liberado em instantes.');
-      
-      // Retorna para a tela de ajustes após 2 segundos
-      setTimeout(() => {
-        onBack();
-      }, 2000);
+      setTimeout(() => onBack(), 2000);
 
     } catch (error: any) {
       console.error(error);
@@ -147,10 +160,27 @@ export function Checkout({ onBack }: { onBack: () => void }) {
     }
   };
 
-  const planPriceDisplay = pendingOffer ? `R$ ${pendingOffer.new_price.toFixed(2)}` : 'R$ 19,00';
-  const planSubtitleDisplay = pendingOffer 
-    ? `${planPriceDisplay} / mês • Plano Customizado (${pendingOffer.new_limit} moradores)` 
-    : 'R$ 19,00 / mês • Cancele quando quiser';
+  // 🚀 MARKETING: Cálculo de Preços Visual no Frontend
+  const basePrice = 19.00;
+  let finalPrice = basePrice;
+  let planSubtitleDisplay = 'R$ 19,00 / mês • Cancele quando quiser';
+  let planPriceDisplay = 'R$ 19,00';
+
+  if (pendingOffer) {
+    finalPrice = pendingOffer.new_price;
+    planPriceDisplay = `R$ ${finalPrice.toFixed(2).replace('.', ',')}`;
+    planSubtitleDisplay = `${planPriceDisplay} / mês • Plano Customizado (${pendingOffer.new_limit} moradores)`;
+  } else if (appliedCoupon) {
+    if (appliedCoupon.discount_type === 'percentage') {
+      finalPrice = basePrice * (1 - appliedCoupon.discount_value / 100);
+    } else {
+      finalPrice = Math.max(0, basePrice - appliedCoupon.discount_value);
+    }
+    planPriceDisplay = `R$ ${finalPrice.toFixed(2).replace('.', ',')}`;
+    planSubtitleDisplay = appliedCoupon.first_charge_only 
+      ? `Primeira mensalidade: ${planPriceDisplay} (Depois R$ 19,00/mês)` 
+      : `${planPriceDisplay} / mês com desconto aplicado`;
+  }
 
   return (
     <div className="min-h-screen bg-carrin-bg p-6 pb-32 max-w-lg mx-auto space-y-6 relative animate-in fade-in slide-in-from-bottom-4 duration-300">
@@ -162,15 +192,12 @@ export function Checkout({ onBack }: { onBack: () => void }) {
         </div>
       )}
 
-      {/* Banner de Oferta Customizada, se houver */}
       {pendingOffer && (
         <div className="bg-emerald-50 border border-emerald-200 p-4 rounded-card flex items-center gap-3">
           <Tag className="text-emerald-600 shrink-0" size={24} />
           <div>
             <p className="text-xs font-bold text-emerald-900 uppercase">Oferta Especial Disponível!</p>
-            <p className="text-sm text-emerald-700 font-medium">
-              Sua casa foi liberada para até {pendingOffer.new_limit} moradores por apenas {planPriceDisplay}/mês.
-            </p>
+            <p className="text-sm text-emerald-700 font-medium">Sua casa foi liberada para até {pendingOffer.new_limit} moradores por apenas {planPriceDisplay}/mês.</p>
           </div>
         </div>
       )}
@@ -187,7 +214,6 @@ export function Checkout({ onBack }: { onBack: () => void }) {
 
       <form onSubmit={handleCheckout} className="space-y-4">
         
-        {/* DADOS DO CARTÃO */}
         <div className="bg-white rounded-card p-5 shadow-sm space-y-4 border border-gray-100">
           <div className="flex items-center gap-2 text-carrin-dark font-semibold pb-2 border-b border-gray-50">
             <CreditCard size={18} className="text-emerald-600" />
@@ -197,51 +223,27 @@ export function Checkout({ onBack }: { onBack: () => void }) {
           <div className="space-y-3">
             <div>
               <label className="text-[10px] text-gray-400 uppercase font-bold tracking-wider mb-1 block">Número do Cartão</label>
-              <input 
-                type="text" required
-                value={cardNumber} onChange={handleCardNumber}
-                placeholder="0000 0000 0000 0000"
-                maxLength={19}
-                className="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2.5 text-sm font-bold text-carrin-dark outline-none focus:border-emerald-600"
-              />
+              <input type="text" required value={cardNumber} onChange={handleCardNumber} placeholder="0000 0000 0000 0000" maxLength={19} className="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2.5 text-sm font-bold text-carrin-dark outline-none focus:border-emerald-600" />
             </div>
 
             <div>
               <label className="text-[10px] text-gray-400 uppercase font-bold tracking-wider mb-1 block">Nome Impresso no Cartão</label>
-              <input 
-                type="text" required
-                value={cardName} onChange={(e) => setCardName(e.target.value.toUpperCase())}
-                placeholder="NOME DO TITULAR"
-                className="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2.5 text-sm font-medium text-carrin-dark outline-none focus:border-emerald-600 uppercase"
-              />
+              <input type="text" required value={cardName} onChange={(e) => setCardName(e.target.value.toUpperCase())} placeholder="NOME DO TITULAR" className="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2.5 text-sm font-medium text-carrin-dark outline-none focus:border-emerald-600 uppercase" />
             </div>
 
             <div className="flex gap-3">
               <div className="flex-1">
                 <label className="text-[10px] text-gray-400 uppercase font-bold tracking-wider mb-1 block">Validade</label>
-                <input 
-                  type="text" required
-                  value={expiry} onChange={handleExpiry}
-                  placeholder="MM/AAAA"
-                  maxLength={7}
-                  className="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2.5 text-sm font-medium text-carrin-dark outline-none focus:border-emerald-600"
-                />
+                <input type="text" required value={expiry} onChange={handleExpiry} placeholder="MM/AAAA" maxLength={7} className="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2.5 text-sm font-medium text-carrin-dark outline-none focus:border-emerald-600" />
               </div>
               <div className="flex-1">
                 <label className="text-[10px] text-gray-400 uppercase font-bold tracking-wider mb-1 block">CVC</label>
-                <input 
-                  type="text" required
-                  value={cvc} onChange={(e) => setCvc(e.target.value.replace(/\D/g, '').substring(0, 4))}
-                  placeholder="123"
-                  maxLength={4}
-                  className="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2.5 text-sm font-medium text-carrin-dark outline-none focus:border-emerald-600"
-                />
+                <input type="text" required value={cvc} onChange={(e) => setCvc(e.target.value.replace(/\D/g, '').substring(0, 4))} placeholder="123" maxLength={4} className="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2.5 text-sm font-medium text-carrin-dark outline-none focus:border-emerald-600" />
               </div>
             </div>
           </div>
         </div>
 
-        {/* DADOS DO TITULAR */}
         <div className="bg-white rounded-card p-5 shadow-sm space-y-4 border border-gray-100">
           <div className="flex items-center gap-2 text-carrin-dark font-semibold pb-2 border-b border-gray-50">
             <Lock size={18} className="text-gray-400" />
@@ -251,44 +253,66 @@ export function Checkout({ onBack }: { onBack: () => void }) {
           <div className="space-y-3">
             <div>
               <label className="text-[10px] text-gray-400 uppercase font-bold tracking-wider mb-1 block">CPF do Titular</label>
-              <input 
-                type="text" required
-                value={cpf} onChange={handleCpf}
-                placeholder="000.000.000-00"
-                maxLength={14}
-                className="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2.5 text-sm font-medium text-carrin-dark outline-none focus:border-emerald-600"
-              />
+              <input type="text" required value={cpf} onChange={handleCpf} placeholder="000.000.000-00" maxLength={14} className="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2.5 text-sm font-medium text-carrin-dark outline-none focus:border-emerald-600" />
             </div>
 
             <div className="flex gap-3">
               <div className="flex-[2]">
                 <label className="text-[10px] text-gray-400 uppercase font-bold tracking-wider mb-1 block">CEP</label>
-                <input 
-                  type="text" required
-                  value={cep} onChange={handleCep}
-                  placeholder="00000-000"
-                  maxLength={9}
-                  className="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2.5 text-sm font-medium text-carrin-dark outline-none focus:border-emerald-600"
-                />
+                <input type="text" required value={cep} onChange={handleCep} placeholder="00000-000" maxLength={9} className="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2.5 text-sm font-medium text-carrin-dark outline-none focus:border-emerald-600" />
               </div>
               <div className="flex-1">
                 <label className="text-[10px] text-gray-400 uppercase font-bold tracking-wider mb-1 block">Número</label>
-                <input 
-                  type="text" required
-                  value={addressNumber} onChange={(e) => setAddressNumber(e.target.value)}
-                  placeholder="123"
-                  className="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2.5 text-sm font-medium text-carrin-dark outline-none focus:border-emerald-600"
-                />
+                <input type="text" required value={addressNumber} onChange={(e) => setAddressNumber(e.target.value)} placeholder="123" className="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2.5 text-sm font-medium text-carrin-dark outline-none focus:border-emerald-600" />
               </div>
             </div>
           </div>
         </div>
 
-        <button
-          type="submit"
-          disabled={loading}
-          className="w-full bg-emerald-600 text-white py-3.5 rounded-card font-bold text-sm hover:bg-emerald-700 transition-colors shadow-sm mt-4 flex justify-center items-center gap-2 disabled:opacity-50"
-        >
+        {/* 🚀 MARKETING: Bloco do Cupom */}
+        {!pendingOffer && (
+          <div className="bg-white rounded-card p-4 shadow-sm border border-gray-100 space-y-3">
+            {appliedCoupon ? (
+              <div className="flex items-center justify-between bg-emerald-50 border border-emerald-100 p-3 rounded-small">
+                <div className="flex items-center gap-2">
+                  <Tag size={16} className="text-emerald-600" />
+                  <div>
+                    <p className="text-xs font-bold text-emerald-800 uppercase tracking-wider">{appliedCoupon.code} aplicado</p>
+                    <p className="text-[10px] text-emerald-600 font-medium">
+                      {appliedCoupon.discount_type === 'percentage' ? `${appliedCoupon.discount_value}% de desconto na primeira fatura` : `R$ ${appliedCoupon.discount_value.toFixed(2)} de desconto na primeira fatura`}
+                    </p>
+                  </div>
+                </div>
+                <button type="button" onClick={() => setAppliedCoupon(null)} className="text-emerald-700 hover:text-emerald-900 bg-emerald-100 p-1.5 rounded-full transition-colors">
+                  <X size={14} />
+                </button>
+              </div>
+            ) : (
+              <div>
+                <label className="text-[10px] text-gray-400 uppercase font-bold tracking-wider mb-2 block">Possui um cupom?</label>
+                <div className="flex gap-2">
+                  <input 
+                    type="text" 
+                    value={couponInput} 
+                    onChange={(e) => setCouponInput(e.target.value.toUpperCase())}
+                    placeholder="Digite seu cupom"
+                    className="w-full bg-gray-50 border border-gray-200 rounded px-3 py-2.5 text-sm font-bold text-carrin-dark outline-none focus:border-emerald-600 uppercase"
+                  />
+                  <button 
+                    type="button" 
+                    onClick={handleApplyCoupon}
+                    disabled={validatingCoupon || !couponInput.trim()}
+                    className="bg-gray-800 text-white px-4 py-2 rounded text-sm font-bold disabled:opacity-50 hover:bg-black transition-colors shrink-0"
+                  >
+                    {validatingCoupon ? '...' : 'Aplicar'}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        <button type="submit" disabled={loading} className="w-full bg-emerald-600 text-white py-3.5 rounded-card font-bold text-sm hover:bg-emerald-700 transition-colors shadow-sm mt-4 flex justify-center items-center gap-2 disabled:opacity-50">
           {loading ? 'Processando pagamento seguro...' : `Confirmar Assinatura (${planPriceDisplay}/mês)`}
         </button>
         

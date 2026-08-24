@@ -40,7 +40,6 @@ export function ShoppingList() {
     return localStorage.getItem('carrin_current_tab') || 'list';
   });
 
-  // ================= ESTADOS DAS LISTAS =================
   const [mainListId, setMainListId] = useState<string | null>(null);
   const [quickList, setQuickList] = useState<{ id: string, name: string | null } | null>(null);
   const [selectedListId, setSelectedListId] = useState<string | null>(null);
@@ -53,7 +52,6 @@ export function ShoppingList() {
   const [sortBy, setSortBy] = useState<'category' | 'alphabetical' | 'recent' | 'oldest' | 'resident'>('category');
   const [emptyMessage, setEmptyMessage] = useState(EMPTY_MESSAGES[0]);
 
-  // ================= MODO MERCADO =================
   const getMarketSessions = () => JSON.parse(localStorage.getItem('carrin_market_sessions_v1') || '{}');
   const saveMarketSession = (listId: string, active: boolean) => {
     const sessions = getMarketSessions();
@@ -80,13 +78,13 @@ export function ShoppingList() {
   const [isFinishModalOpen, setIsFinishModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<any | null>(null);
   const [finishing, setFinishing] = useState(false);
+  const [pendingListSwitch, setPendingListSwitch] = useState<string | null>(null);
   const [homePreferences, setHomePreferences] = useState<Record<string, string>>({});
   
   const [userPrefs, setUserPrefs] = useState<any>(null);
 
-  // ================= MENUS =================
-  const [showListSwitcherMenu, setShowListSwitcherMenu] = useState(false); // Menu 1 (Título)
-  const [showListActionsMenu, setShowListActionsMenu] = useState(false);   // Menu 2 (Filtros)
+  const [showListSwitcherMenu, setShowListSwitcherMenu] = useState(false); 
+  const [showListActionsMenu, setShowListActionsMenu] = useState(false); 
   
   const [showQuickIntro, setShowQuickIntro] = useState(false);
   const [showCreateQuick, setShowCreateQuick] = useState(false);
@@ -115,7 +113,6 @@ export function ShoppingList() {
 
   const isAnyModalOpen = !!(priceModalItem || itemToUncheck || showTutorial || isFinishModalOpen || isModalOpen || showPushPrompt || showClearConfirm || showQuickIntro || showCreateQuick || showRenameQuick || showDeleteQuick);
 
-  // NOVO: Chama a trava de scroll para iOS
   useScrollLock(isAnyModalOpen);
 
   useEffect(() => {
@@ -138,7 +135,6 @@ export function ShoppingList() {
     }
   }, [currentTab, userPrefs, activeTutorial, startTutorial, pushPromptResolved]);
 
-  // FONTE ÚNICA DE VERDADE COMERCIAL
   const checkAccess = useCallback(async () => {
     if (!homeId || !user) return;
     try {
@@ -152,7 +148,6 @@ export function ShoppingList() {
     }
   }, [homeId, user]);
 
-  // ================= CARREGAMENTO INICIAL E MIGRAÇÃO =================
   useEffect(() => {
     async function loadData() {
       if (!homeId || !user) return;
@@ -163,11 +158,9 @@ export function ShoppingList() {
         setMainListId(mId);
         setQuickList(qList);
         
-        // Sempre entra na main list como padrão
         if (mId && !selectedListId) {
           setSelectedListId(mId);
 
-          // MIGRAR O MODO MERCADO ANTIGO
           const oldIsMarket = localStorage.getItem('carrin_is_market_mode');
           if (oldIsMarket === 'true') {
             saveMarketSession(mId, true);
@@ -189,14 +182,15 @@ export function ShoppingList() {
       }
     }
     loadData();
-  }, [homeId, user, checkAccess]); // Removido selectedListId para evitar loop infinito
+  }, [homeId, user, checkAccess]);
 
-  // ================= BUSCA DE ITENS DA LISTA SELECIONADA =================
   useEffect(() => {
-    if (!selectedListId) return;
+    if (!selectedListId) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     
-    // Atualiza o estado do Modo Mercado para a lista atual
     setIsMarketMode(!!getMarketSessions()[selectedListId]?.active);
 
     itemService.getItems(selectedListId)
@@ -204,7 +198,6 @@ export function ShoppingList() {
       .catch(e => console.error("Erro ao buscar itens atualizados:", e))
       .finally(() => setLoading(false));
 
-    // REALTIME: Itens apenas desta lista
     const itemsChannel = supabase.channel(`items_${selectedListId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'shopping_items', filter: `shopping_list_id=eq.${selectedListId}` }, (payload) => {
         if (payload.eventType === 'INSERT') setItems(curr => curr.some(i => i.id === payload.new.id) ? curr : [payload.new, ...curr]);
@@ -215,7 +208,6 @@ export function ShoppingList() {
     return () => { supabase.removeChannel(itemsChannel); };
   }, [selectedListId]);
 
-  // ================= REALTIME: LISTAS DA CASA =================
   useEffect(() => {
     if (!homeId) return;
     const listsChannel = supabase.channel(`lists_${homeId}`)
@@ -228,7 +220,6 @@ export function ShoppingList() {
           if (payload.new.status === 'active') {
             setQuickList({ id: payload.new.id, name: payload.new.name });
           } else {
-            // Finalizada ou excluída
             setQuickList(null);
             if (selectedListId === payload.new.id) {
               setToastMsg(payload.new.status === 'deleted' ? 'A Lista Rápida foi excluída.' : 'A Lista Rápida foi finalizada.');
@@ -241,7 +232,6 @@ export function ShoppingList() {
     return () => { supabase.removeChannel(listsChannel); };
   }, [homeId, selectedListId, mainListId]);
 
-  // Ouvinte em Tempo Real para o Status Comercial
   useEffect(() => {
     if (!homeId) return;
     const channel = supabase
@@ -301,7 +291,6 @@ export function ShoppingList() {
     setPushPromptResolved(true);
   };
 
-  // ================= AÇÕES DA LISTA RÁPIDA =================
   const handleStartQuickListCreation = () => {
     setShowListSwitcherMenu(false);
     if (userPrefs?.tutorial_state?.quick_list_intro !== 'done') {
@@ -367,7 +356,7 @@ export function ShoppingList() {
     setListActionLoading(true);
     try {
       await itemService.deleteQuickList(quickList.id);
-      saveMarketSession(quickList.id, false); // Limpa mercado
+      saveMarketSession(quickList.id, false); 
       setQuickList(null);
       setSelectedListId(mainListId);
       setShowDeleteQuick(false);
@@ -398,13 +387,23 @@ export function ShoppingList() {
     saveMarketSession(selectedListId!, true);
   };
 
+  const handleEditPrice = (item: any) => {
+    setPriceModalItem(item);
+    setBoughtQty(item.bought_quantity || (item.quantity ? Number(item.quantity) : 1));
+    if (item.unit_price) { 
+      setPriceInput(Number(item.unit_price).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })); 
+    } else if (item.price) {
+      const fallbackUnit = Number(item.price) / (item.bought_quantity || 1);
+      setPriceInput(fallbackUnit.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+    } else { 
+      setPriceInput(''); 
+    }
+  };
+
   const handleToggle = async (item: any) => {
     const nextStatus = !item.is_completed;
     if (isMarketMode && nextStatus) {
-      setPriceModalItem(item);
-      setBoughtQty(item.quantity ? Number(item.quantity) : 1);
-      if (item.unit_price) { setPriceInput(Number(item.unit_price).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })); } 
-      else { setPriceInput(''); }
+      handleEditPrice(item);
       return;
     }
     if (!nextStatus && item.price > 0) {
@@ -472,15 +471,12 @@ export function ShoppingList() {
     setItems(items.filter(item => item.id !== id));
     
     try {
-      // 1. FLUXO ANTIGO PRESERVADO: Exclui o item
       await itemService.deleteItem(id);
       
-      // 2. FLUXO ANTIGO PRESERVADO: Ativa o Desfazer
       if (undoDelete?.timerId) clearTimeout(undoDelete.timerId);
       const timerId = setTimeout(() => setUndoDelete(null), 5000);
       setUndoDelete({ item: itemToDelete, timerId });
 
-      // 3. NOVO: Notificação Totalmente Isolada agora passa a Lista atual
       if (homeId) {
         try {
           await supabase.rpc('notify_items_removed', {
@@ -495,7 +491,6 @@ export function ShoppingList() {
       }
 
     } catch (error) {
-      // 4. Se chegou aqui, o erro foi na EXCLUSÃO real (banco offline, RLS, etc)
       console.error("Erro ao deletar item:", error);
       setItems(previousItems);
       alert("Erro ao excluir o item. Verifique sua conexão.");
@@ -508,7 +503,6 @@ export function ShoppingList() {
     const item = undoDelete.item;
     setUndoDelete(null);
     try {
-      // Reinsere NA MESMA LISTA
       const savedItem = await itemService.addItem({ 
         name: item.name, 
         quantity: item.quantity, 
@@ -536,7 +530,6 @@ export function ShoppingList() {
     setClearingList(true);
     
     try {
-      // 1. FLUXO ANTIGO PRESERVADO
       await itemService.clearList(selectedListId);
       
       setItems([]);
@@ -544,7 +537,6 @@ export function ShoppingList() {
       const timerId = setTimeout(() => setUndoClear(null), 5000);
       setUndoClear({ items: snapshot, listId: selectedListId, timerId });
 
-      // 2. NOVO: Notificação Isolada Agrupada
       if (homeId && snapshot.length > 0) {
         try {
           await supabase.rpc('notify_items_removed', {
@@ -642,21 +634,32 @@ export function ShoppingList() {
       saveMarketSession(selectedListId, false);
       
       if (selectedListType === 'main' && newListId) {
-        setMainListId(newListId);
-        setSelectedListId(newListId);
+        setPendingListSwitch(newListId);
       } else {
-        setQuickList(null);
-        setSelectedListId(mainListId);
+        setPendingListSwitch('quick_to_main');
       }
-      setItems([]);
     } catch (error) {
       console.error("Erro ao finalizar compra:", error);
-      alert("Houve um erro ao salvar o histórico, mas sua lista foi concluída.");
+      alert("Houve um erro ao salvar o histórico. Tente novamente.");
+      throw error;
     } finally {
-      setIsMarketMode(false);
-      setIsFinishModalOpen(false);
       setFinishing(false);
     }
+  };
+
+  const handleCloseFinishModal = () => {
+    setIsFinishModalOpen(false);
+    setIsMarketMode(false);
+    setItems([]);
+
+    if (pendingListSwitch === 'quick_to_main') {
+      setQuickList(null);
+      setSelectedListId(mainListId);
+    } else if (pendingListSwitch) {
+      setMainListId(pendingListSwitch);
+      setSelectedListId(pendingListSwitch);
+    }
+    setPendingListSwitch(null);
   };
 
   const openAddModal = () => {
@@ -698,7 +701,7 @@ export function ShoppingList() {
               <div className="space-y-2">
                 {groupedPending[category].map((item: any) => (
                   <div key={item.id} className={isMarketMode ? 'py-1 text-lg' : ''}>
-                    <ShoppingItemCard name={item.name} quantity={item.quantity ? `${item.quantity} ${item.unit || ''}`.trim() : undefined} observation={item.observation} isCompleted={item.is_completed} isMarketMode={isMarketMode} creatorAvatar={item.users?.avatar_url} creatorName={item.users?.full_name || item.users?.username} onToggle={() => handleToggle(item)} onDelete={() => handleDelete(item.id)} onEdit={() => openEditModal(item)} onUpdateCategory={(cat) => handleUpdateCategory(item.id, cat)} />
+                    <ShoppingItemCard name={item.name} quantity={item.quantity ? `${item.quantity} ${item.unit || ''}`.trim() : undefined} observation={item.observation} isCompleted={item.is_completed} isMarketMode={isMarketMode} creatorAvatar={item.users?.avatar_url} creatorName={item.users?.full_name || item.users?.username} price={item.price} unitPrice={item.unit_price} boughtQuantity={item.bought_quantity} onToggle={() => handleToggle(item)} onDelete={() => handleDelete(item.id)} onEdit={() => openEditModal(item)} onEditPrice={() => handleEditPrice(item)} onUpdateCategory={(cat) => handleUpdateCategory(item.id, cat)} />
                   </div>
                 ))}
               </div>
@@ -735,7 +738,7 @@ export function ShoppingList() {
                 <div className="space-y-2">
                   {sortedItems.map((item: any) => (
                     <div key={item.id} className={isMarketMode ? 'py-1 text-lg' : ''}>
-                      <ShoppingItemCard name={item.name} quantity={item.quantity ? `${item.quantity} ${item.unit || ''}`.trim() : undefined} observation={item.observation} isCompleted={item.is_completed} isMarketMode={isMarketMode} creatorAvatar={item.users?.avatar_url} creatorName={item.users?.full_name || item.users?.username} onToggle={() => handleToggle(item)} onDelete={() => handleDelete(item.id)} onEdit={() => openEditModal(item)} onUpdateCategory={(cat) => handleUpdateCategory(item.id, cat)} />
+                      <ShoppingItemCard name={item.name} quantity={item.quantity ? `${item.quantity} ${item.unit || ''}`.trim() : undefined} observation={item.observation} isCompleted={item.is_completed} isMarketMode={isMarketMode} creatorAvatar={item.users?.avatar_url} creatorName={item.users?.full_name || item.users?.username} price={item.price} unitPrice={item.unit_price} boughtQuantity={item.bought_quantity} onToggle={() => handleToggle(item)} onDelete={() => handleDelete(item.id)} onEdit={() => openEditModal(item)} onEditPrice={() => handleEditPrice(item)} onUpdateCategory={(cat) => handleUpdateCategory(item.id, cat)} />
                     </div>
                   ))}
                 </div>
@@ -757,7 +760,7 @@ export function ShoppingList() {
       <div className="mb-6 space-y-2">
         {flatSorted.map((item: any) => (
           <div key={item.id} className={isMarketMode ? 'py-1 text-lg' : ''}>
-            <ShoppingItemCard name={item.name} quantity={item.quantity ? `${item.quantity} ${item.unit || ''}`.trim() : undefined} observation={item.observation} isCompleted={item.is_completed} isMarketMode={isMarketMode} creatorAvatar={item.users?.avatar_url} creatorName={item.users?.full_name || item.users?.username} onToggle={() => handleToggle(item)} onDelete={() => handleDelete(item.id)} onEdit={() => openEditModal(item)} onUpdateCategory={(cat) => handleUpdateCategory(item.id, cat)} />
+            <ShoppingItemCard name={item.name} quantity={item.quantity ? `${item.quantity} ${item.unit || ''}`.trim() : undefined} observation={item.observation} isCompleted={item.is_completed} isMarketMode={isMarketMode} creatorAvatar={item.users?.avatar_url} creatorName={item.users?.full_name || item.users?.username} price={item.price} unitPrice={item.unit_price} boughtQuantity={item.bought_quantity} onToggle={() => handleToggle(item)} onDelete={() => handleDelete(item.id)} onEdit={() => openEditModal(item)} onEditPrice={() => handleEditPrice(item)} onUpdateCategory={(cat) => handleUpdateCategory(item.id, cat)} />
           </div>
         ))}
       </div>
@@ -767,7 +770,7 @@ export function ShoppingList() {
   const billingUI = interpretBillingState(commercialContext, userRole);
 
   return (
-    <div className="w-full min-h-screen bg-carrin-bg relative overflow-x-hidden">
+    <div className="w-full min-h-[100dvh] bg-carrin-bg relative overflow-x-hidden">
       {toastMsg && (
         <div className="fixed top-6 left-1/2 -translate-x-1/2 bg-[#059669] text-white px-5 py-2.5 rounded-full flex items-center gap-4 shadow-lg z-[9999] w-max max-w-[90vw] animate-in fade-in slide-in-from-top-4 duration-300">
           <div className="flex items-center gap-2"><Check size={18} strokeWidth={2.5} /><span className="font-semibold text-sm truncate">{toastMsg}</span></div>
@@ -789,7 +792,7 @@ export function ShoppingList() {
         </div>
       )}
 
-      <div className={`w-full min-h-screen bg-carrin-bg ${isMarketMode ? 'pb-24' : 'pb-32'} ${currentTab === 'list' ? 'block' : 'hidden'}`}>
+      <div className={`w-full min-h-[100dvh] bg-carrin-bg ${isMarketMode ? 'pb-[calc(6rem+env(safe-area-inset-bottom))]' : 'pb-[calc(8rem+env(safe-area-inset-bottom))]'} ${currentTab === 'list' ? 'block' : 'hidden'}`}>
         {!isMarketMode && hasActiveMarketSession && (
           <div className="bg-emerald-800 text-white px-4 py-2.5 text-xs flex items-center justify-between shadow-md">
             <div className="flex items-center gap-2"><AlertCircle size={16} className="text-emerald-300 animate-pulse" /><span className="font-semibold">Modo Mercado em andamento</span></div>
@@ -801,7 +804,6 @@ export function ShoppingList() {
         )}
 
         <div className="p-6 pb-2">
-          {/* HEADER PRINCIPAL COM O MENU 1 (LISTA RÁPIDA) */}
           <div className="flex justify-between items-start mb-4">
             <div className="flex-1 relative">
               <div className="flex items-center gap-1 mb-0.5">
@@ -812,7 +814,6 @@ export function ShoppingList() {
                   {selectedListType === 'quick' ? (quickList?.name || 'Lista Rápida') : 'Sua Lista'}
                 </h1>
                 
-                {/* MENU 1: TÍTULO */}
                 <button onClick={() => { setShowListSwitcherMenu(!showListSwitcherMenu); setShowListActionsMenu(false); }} className="ml-1 p-1 text-gray-400 hover:text-carrin-dark rounded-full hover:bg-gray-100 transition-colors shrink-0">
                   <MoreVertical size={20} />
                 </button>
@@ -888,7 +889,6 @@ export function ShoppingList() {
               
               {!isMarketMode && (
                 <div className="relative shrink-0">
-                  {/* MENU 2: ORIGINAL (CATEGORIAS) */}
                   <button onClick={() => { setShowListActionsMenu(!showListActionsMenu); setShowListSwitcherMenu(false); }} className="w-[42px] h-[42px] flex items-center justify-center bg-white border border-gray-100 rounded-small text-gray-500 hover:text-carrin-dark hover:border-carrin-primary transition-colors shadow-sm"><MoreVertical size={20} /></button>
                   {showListActionsMenu && (
                     <>
@@ -922,9 +922,8 @@ export function ShoppingList() {
                   <h2 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-3 flex items-center justify-between"><span>Comprados ({completedItems.length})</span></h2>
                   <div className="space-y-2">
                     {completedItems.map((item: any) => (
-                      <div key={item.id} className="relative">
-                        <ShoppingItemCard name={item.name} quantity={item.quantity ? `${item.quantity} ${item.unit || ''}`.trim() : undefined} observation={item.observation} isCompleted={item.is_completed} isMarketMode={isMarketMode} creatorAvatar={item.users?.avatar_url} creatorName={item.users?.full_name || item.users?.username} onToggle={() => handleToggle(item)} onDelete={() => handleDelete(item.id)} onEdit={() => openEditModal(item)} onUpdateCategory={(cat) => handleUpdateCategory(item.id, cat)} />
-                        {isMarketMode && item.price > 0 && (<span className="absolute right-4 top-4 text-xs font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-small">R$ {Number(item.price).toFixed(2)}</span>)}
+                      <div key={item.id} className="relative group">
+                        <ShoppingItemCard name={item.name} quantity={item.quantity ? `${item.quantity} ${item.unit || ''}`.trim() : undefined} observation={item.observation} isCompleted={item.is_completed} isMarketMode={isMarketMode} creatorAvatar={item.users?.avatar_url} creatorName={item.users?.full_name || item.users?.username} price={item.price} unitPrice={item.unit_price} boughtQuantity={item.bought_quantity} onToggle={() => handleToggle(item)} onDelete={() => handleDelete(item.id)} onEdit={() => openEditModal(item)} onEditPrice={() => handleEditPrice(item)} onUpdateCategory={(cat) => handleUpdateCategory(item.id, cat)} />
                       </div>
                     ))}
                   </div>
@@ -935,7 +934,7 @@ export function ShoppingList() {
         </div>
 
         {!isMarketMode && (
-          <div className="fixed bottom-20 left-0 w-full px-6 pointer-events-none">
+          <div className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] left-0 w-full px-6 pointer-events-none z-40">
             {canWrite ? (
               <button ref={(el) => registerElement('btn-add-item', el)} onClick={openAddModal} className="w-full bg-carrin-primary text-white py-4 rounded-button font-semibold shadow-sm pointer-events-auto hover:opacity-90 transition-all flex items-center justify-center gap-2">
                 <span>+ Adicionar Item</span>
@@ -957,7 +956,7 @@ export function ShoppingList() {
         )}
 
         {isMarketMode && canWrite && (
-          <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-3 pointer-events-none">
+          <div className="fixed bottom-[calc(1.5rem+env(safe-area-inset-bottom))] right-6 z-50 flex flex-col items-end gap-3 pointer-events-none">
             {showFabTooltip && (
               <div className="bg-carrin-dark text-white text-xs font-bold px-3 py-2 rounded-xl shadow-xl relative animate-in fade-in slide-in-from-bottom-2 duration-300 pointer-events-auto cursor-pointer" onClick={() => setShowFabTooltip(false)}>Faltou algo? Adicione aqui! 👀<div className="absolute -bottom-1.5 right-5 w-3 h-3 bg-carrin-dark rotate-45 rounded-sm"></div></div>
             )}
@@ -1032,7 +1031,7 @@ export function ShoppingList() {
                 <div className="bg-emerald-50 border border-emerald-100 p-3 rounded-small flex justify-between items-center"><span className="text-xs font-bold text-emerald-800 uppercase tracking-wider">Total do item</span><span className="text-xl font-extrabold text-emerald-600">R$ {liveTotal.toFixed(2)}</span></div>
                 <div className="flex gap-2 mt-2">
                   <button type="button" onClick={() => { executeToggle(priceModalItem.id, true, 0, null, null); setPriceModalItem(null); setPriceInput(''); }} className="w-1/2 bg-gray-100 text-gray-600 py-3 rounded-small font-bold text-sm hover:bg-gray-200 transition-colors">Pular valor</button>
-                  <button type="submit" className="w-full bg-emerald-600 text-white py-3 rounded-small font-bold text-sm shadow hover:bg-emerald-700 transition-all">Confirmar</button>
+                  <button type="submit" className="w-full bg-emerald-600 text-white py-3 rounded-small font-bold text-sm shadow hover:bg-emerald-700 transition-all">Salvar Preço</button>
                 </div>
               </form>
             </div>
@@ -1040,7 +1039,6 @@ export function ShoppingList() {
         );
       })()}
 
-      {/* MODAIS DA LISTA RÁPIDA (NOVOS) */}
       {showQuickIntro && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60] p-4 animate-in fade-in duration-200">
           <div className="bg-white w-full max-w-sm rounded-card p-6 shadow-2xl animate-in zoom-in-95 duration-200">
@@ -1107,7 +1105,16 @@ export function ShoppingList() {
       )}
 
       <AddItemModal isOpen={isModalOpen} onClose={() => { setIsModalOpen(false); setEditingItem(null); }} onSave={handleSaveItem} initialData={editingItem} existingItems={items} homePreferences={homePreferences} onGoToExisting={(item) => { setIsModalOpen(false); setEditingItem(null); setSearchQuery(item.name); }} />
-      <FinishShoppingModal isOpen={isFinishModalOpen} onClose={() => setIsFinishModalOpen(false)} onConfirm={handleConfirmFinishShopping} totalAmount={totalEstimated} totalItems={completedItems.length} loading={finishing} />
+      
+      <FinishShoppingModal 
+        isOpen={isFinishModalOpen} 
+        onClose={handleCloseFinishModal} 
+        onConfirm={handleConfirmFinishShopping} 
+        totalAmount={totalEstimated} 
+        totalItems={completedItems.length} 
+        loading={finishing} 
+        isQuickList={selectedListType === 'quick'} 
+      />
       <PushPermissionModal isOpen={showPushPrompt} onClose={handleDeclinePush} onConfirm={handleEnablePush} />
 
       {!isMarketMode && <BottomNav currentTab={currentTab} onTabChange={setCurrentTab} />}

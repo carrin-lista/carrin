@@ -10,6 +10,7 @@ interface FinishShoppingModalProps {
   totalAmount: number;
   totalItems: number;
   loading: boolean;
+  isQuickList?: boolean; // Propriedade nova aqui!
 }
 
 export function FinishShoppingModal({
@@ -18,7 +19,8 @@ export function FinishShoppingModal({
   onConfirm,
   totalAmount,
   totalItems,
-  loading
+  loading,
+  isQuickList = false // Valor padrão aqui!
 }: FinishShoppingModalProps) {
   const { homeId } = useAuthStore();
   
@@ -84,7 +86,6 @@ export function FinishShoppingModal({
       }, 3000);
     } catch (error) {
       console.error("Erro ao finalizar:", error);
-      alert("Houve um erro ao salvar os detalhes. Tente novamente.");
       setLocalLoading(false);
     }
   };
@@ -97,7 +98,14 @@ export function FinishShoppingModal({
           <div className="text-center py-10 space-y-3 animate-in fade-in duration-200">
             <CheckCircle2 size={64} className="text-emerald-600 mx-auto animate-bounce" />
             <h3 className="text-2xl font-extrabold text-carrin-dark">Compra concluída</h3>
-            <p className="text-sm text-gray-500">Histórico salvo com sucesso. Iniciando nova lista...</p>
+            
+            {/* Texto dinâmico dependendo da lista aqui! */}
+            <p className="text-sm text-gray-500">
+              {isQuickList 
+                ? 'Sua compra foi salva no Histórico.' 
+                : 'Histórico salvo com sucesso. Iniciando nova lista...'}
+            </p>
+
           </div>
         ) : (
           <>
@@ -128,7 +136,6 @@ export function FinishShoppingModal({
               </div>
             </div>
 
-            {/* Novo Bloco do Mercado */}
             <div className="mb-6">
               <label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 block">
                 Onde você comprou?

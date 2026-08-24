@@ -15,9 +15,13 @@ interface ShoppingItemCardProps {
   isMarketMode?: boolean; 
   creatorAvatar?: string | null;
   creatorName?: string | null;
+  price?: number;
+  unitPrice?: number;
+  boughtQuantity?: number;
   onToggle: () => void;
   onDelete: () => void;
   onEdit: () => void;
+  onEditPrice?: () => void;
   onUpdateCategory?: (newCategory: string) => void;
 }
 
@@ -29,9 +33,13 @@ export function ShoppingItemCard({
   isMarketMode = false, 
   creatorAvatar,
   creatorName,
+  price,
+  unitPrice,
+  boughtQuantity,
   onToggle,
   onDelete,
   onEdit,
+  onEditPrice,
   onUpdateCategory
 }: ShoppingItemCardProps) {
   const [offsetX, setOffsetX] = useState(0);
@@ -43,13 +51,11 @@ export function ShoppingItemCard({
   const swipeDirection = useRef<'left' | 'right' | null>(null);
   const longPressTimer = useRef<any>(null);
 
-  // Estados dos Menus e Card
   const [showActionMenu, setShowActionMenu] = useState(false);
   const [isMovingCategory, setIsMovingCategory] = useState(false);
   const [showDesktopMenu, setShowDesktopMenu] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
 
-  // Detecta se é um ambiente Desktop (Mouse/Pointer preciso)
   const isDesktop = typeof window !== 'undefined' && window.matchMedia('(hover: hover) and (pointer: fine)').matches;
 
   useEffect(() => {
@@ -142,20 +148,21 @@ export function ShoppingItemCard({
       return;
     }
     
-    // NOVO: Menu Contextual Desktop (Apenas se for mouse)
     if (isDesktop && !isMarketMode && !isCompleted) {
       setShowDesktopMenu(true);
       return;
     }
 
     if (!isMarketMode && !isCompleted) return;
-    onToggle();
+    
+    if (!isCompleted) {
+      onToggle();
+    }
   };
 
   return (
     <div ref={cardRef} className={`relative overflow-visible mb-3 rounded-card ${!isCompleted && offsetX < 0 ? 'bg-red-500' : !isCompleted && offsetX > 0 ? 'bg-gray-100' : 'bg-transparent'}`}>
       
-      {/* Camada Lixeira (Direita) */}
       {!isCompleted && offsetX < 0 && (
         <div 
           className="absolute right-0 top-0 bottom-0 w-[90px] flex items-center justify-center text-white font-bold cursor-pointer"
@@ -165,7 +172,6 @@ export function ShoppingItemCard({
         </div>
       )}
 
-      {/* Camada Ícone 3 Pontinhos (Esquerda) */}
       {!isCompleted && offsetX > 0 && !showActionMenu && !isMovingCategory && (
         <div 
           className="absolute left-0 top-0 bottom-0 w-[90px] flex items-center justify-center text-gray-500 hover:text-gray-700 cursor-pointer"
@@ -179,7 +185,6 @@ export function ShoppingItemCard({
         </div>
       )}
 
-      {/* Card Deslizante */}
       <div 
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
@@ -195,20 +200,28 @@ export function ShoppingItemCard({
         onClick={handleClick}
         style={{ transform: `translateX(${isCompleted ? 0 : offsetX}px)` }}
         className={`relative p-4 rounded-card flex items-center justify-between transition-all duration-200 select-none ${
-          (isMarketMode || isCompleted || isDesktop) ? 'cursor-pointer' : 'cursor-default'
+          (!isCompleted && (isMarketMode || isDesktop)) ? 'cursor-pointer' : 'cursor-default'
         } ${
           isCompleted ? 'bg-red-300 text-white opacity-90 shadow-none' : 'bg-white shadow-sm'
         } ${!isCompleted && isDesktop ? 'lg:hover:bg-gray-50' : ''} ${isMovingCategory ? 'opacity-30 pointer-events-none' : ''}`}
       >
-        <div className="flex items-center flex-grow pr-2 overflow-hidden">
+        <div className="flex items-center flex-grow overflow-hidden">
           
           {(!isCompleted && !isMarketMode) ? null : (
-            <div className={`mr-3 flex-shrink-0 ${isCompleted ? 'text-white' : 'text-carrin-primary'}`}>
+            <div 
+              className={`mr-3 flex-shrink-0 ${isCompleted ? 'text-white cursor-pointer hover:scale-110 transition-transform' : 'text-carrin-primary'}`}
+              onClick={(e) => {
+                if (isCompleted) {
+                  e.stopPropagation();
+                  onToggle();
+                }
+              }}
+            >
               {isCompleted ? <CheckCircle2 size={28} /> : <Circle size={28} className="text-gray-300" />}
             </div>
           )}
           
-          <div className="flex flex-col flex-grow pr-2 overflow-hidden">
+          <div className={`flex flex-col flex-grow overflow-hidden ${isCompleted ? 'pr-20' : 'pr-2'}`}>
             <span className={`font-semibold text-lg truncate ${isCompleted ? 'text-white line-through' : 'text-carrin-dark'}`}>
               {name}
             </span>
@@ -221,6 +234,7 @@ export function ShoppingItemCard({
             )}
           </div>
 
+          {/* FOTO DE PERFIL (No cantinho, exatamente como era originalmente) */}
           <div className="flex-shrink-0 ml-2 self-start pt-0.5" title={`Adicionado por ${creatorName || 'Morador'}`}>
             {creatorAvatar ? (
               <img 
@@ -235,9 +249,32 @@ export function ShoppingItemCard({
             )}
           </div>
         </div>
+
+        {/* PREÇO FLUTUANTE: Sobrepondo o card com o design de Pílula e Etiqueta Unitária melhorada */}
+        {isMarketMode && isCompleted && price !== undefined && price > 0 && (
+          <div 
+            className="absolute right-3 top-1/2 -translate-y-1/2 flex flex-col items-end justify-center cursor-pointer z-10 hover:scale-105 active:scale-95 transition-all"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (onEditPrice) onEditPrice();
+            }}
+            title="Editar valor ou quantidade"
+          >
+            {/* Pílula Padrão Carrin */}
+            <span className="text-sm font-extrabold text-emerald-700 bg-emerald-50 px-3 py-1 rounded-full shadow-sm tracking-tight border border-emerald-100">
+              R$ {Number(price).toFixed(2)}
+            </span>
+            
+            {/* Etiqueta de Valor Unitário */}
+            {boughtQuantity !== undefined && boughtQuantity > 1 && unitPrice !== undefined && unitPrice > 0 && (
+              <span className="text-[10px] font-semibold text-white bg-black/15 px-1.5 py-0.5 rounded-md mt-1 backdrop-blur-sm shadow-sm leading-none border border-white/10">
+                R$ {Number(unitPrice).toFixed(2)}/un
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
-      {/* NOVO: Menu Contextual Desktop */}
       {showDesktopMenu && (
         <div className="absolute right-4 top-[80%] bg-white border border-gray-200 shadow-xl rounded-card p-1.5 flex flex-col gap-1 z-30 min-w-[150px] animate-in fade-in zoom-in-95 duration-150">
           <button 
@@ -256,7 +293,6 @@ export function ShoppingItemCard({
         </div>
       )}
 
-      {/* MENUS FLUTUANTES EXISTENTES (FIXOS NA RAIZ) */}
       {showActionMenu && (
         <div className="absolute left-2 top-1/2 -translate-y-1/2 bg-white border border-gray-200 shadow-md rounded-xl p-1.5 flex gap-1 z-30 animate-in fade-in zoom-in-95 duration-150">
           <button 

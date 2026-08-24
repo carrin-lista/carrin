@@ -6,7 +6,7 @@ import { itemService } from '../../services/itemService';
 import { homeService } from '../../services/homeService';
 import { 
   Calendar, ShoppingBag, CheckCircle2, 
-  X, Clock, User, TrendingUp, RotateCcw, ChevronRight, AlertCircle, Check, Wallet, Share2, Search, CopyPlus, Store, Edit2, Plus
+  X, Clock, User, TrendingUp, RotateCcw, ChevronRight, AlertCircle, Check, Wallet, Share2, Search, CopyPlus, Store, Edit2, Plus, Download
 } from 'lucide-react';
 import { useTutorialStore } from '../../stores/useTutorialStore';
 
@@ -104,7 +104,6 @@ export function History({ isActive }: HistoryProps) {
     return () => { supabase.removeChannel(channel); };
   }, [homeId, loadData]);
 
-  // CORREÇÃO: Garante que lê a Main List
   useEffect(() => {
     if (selectedReceiptId && homeId) {
       itemService.getActiveMainListId(homeId).then(mainListId => {
@@ -128,7 +127,6 @@ export function History({ isActive }: HistoryProps) {
     );
   };
 
-  // CORREÇÃO: Restaura os itens sempre na Lista Principal (Main)
   const handleRestoreUnboughtItems = async (unboughtItems: any[]) => {
     if (!homeId || !user || unboughtItems.length === 0) return;
     setRestoring(true);
@@ -176,7 +174,6 @@ export function History({ isActive }: HistoryProps) {
     }
   };
 
-  // CORREÇÃO: Prepara "Comprar novamente" usando a Lista Principal (Main)
   const handleOpenBuyAgain = async (receiptId: string) => {
     setPreparingBuyAgain(true);
     try {
@@ -205,7 +202,6 @@ export function History({ isActive }: HistoryProps) {
     }
   };
 
-  // CORREÇÃO: Executa "Comprar novamente" salvando na Lista Principal (Main)
   const handleConfirmBuyAgain = async () => {
     if (!homeId || !user || !buyAgainReceipt) return;
     
@@ -316,6 +312,65 @@ export function History({ isActive }: HistoryProps) {
       }
     } else {
       fallbackCopy();
+    }
+  };
+
+  // FLUXO DE DOWNLOAD/SHARE DE FOTO CORRIGIDO
+  const handleDownloadReceipt = async (url: string) => {
+    try {
+      let blob: Blob;
+
+      // 1. Obter a imagem resolvendo problemas de CORS (usando API nativa do Supabase)
+      if (url.includes('/storage/v1/object/public/')) {
+        const urlParts = url.split('/storage/v1/object/public/')[1].split('/');
+        const bucket = urlParts[0];
+        const path = urlParts.slice(1).join('/');
+        
+        const { data, error } = await supabase.storage.from(bucket).download(path);
+        if (error) throw error;
+        blob = data as Blob;
+      } else {
+        // Fallback caso a imagem venha de outro lugar
+        const response = await fetch(url);
+        if (!response.ok) throw new Error('Falha no fetch da imagem.');
+        blob = await response.blob();
+      }
+
+      // 2. O iOS Safari REJEITA navigator.share se o tipo for application/octet-stream.
+      let mimeType = blob.type;
+      if (!mimeType || mimeType === 'application/octet-stream') {
+        mimeType = url.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
+      }
+      
+      const date = new Date().toLocaleDateString('pt-BR').replace(/\//g, '-');
+      const ext = mimeType === 'image/png' ? 'png' : 'jpg';
+      const filename = `carrin-comprovante-${date}.${ext}`;
+      
+      // 3. Criamos o Objeto File Real com o MIME type correto para o iPhone
+      const file = new File([blob], filename, { type: mimeType });
+
+      // 4. Fluxo MOBILE: Verifica se o aparelho suporta compartilhar arquivos
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({
+          files: [file],
+          title: 'Comprovante Carrin'
+        });
+      } else {
+        // 5. Fluxo DESKTOP / Fallback: Download invisível
+        const blobUrl = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(blobUrl);
+      }
+    } catch (e: any) {
+      console.error("Erro ao salvar comprovante:", e);
+      if (e.name !== 'AbortError') {
+        showFeedback('error', 'Não foi possível salvar o comprovante.');
+      }
     }
   };
 
@@ -936,17 +991,23 @@ export function History({ isActive }: HistoryProps) {
 
       {expandedImage && (
         <div className="fixed inset-0 z-[80] bg-black/95 flex flex-col items-center justify-center p-4 animate-in fade-in duration-200">
-          <button 
-            onClick={() => setExpandedImage(null)}
-            className="absolute top-6 right-6 bg-white/10 hover:bg-white/20 p-2 rounded-full text-white transition-colors"
-          >
-            <X size={24} />
-          </button>
-          <img 
-            src={expandedImage} 
-            alt="Comprovante em tela cheia" 
-            className="max-w-full max-h-[85vh] object-contain rounded-small shadow-2xl"
-          />
+          <div className="absolute top-6 right-6 flex gap-3 z-50">
+            <button 
+              onClick={() => handleDownloadReceipt(expandedImage)} 
+              className="bg-white/10 hover:bg-white/20 p-2.5 rounded-full text-white transition-colors"
+              title="Salvar comprovante"
+            >
+              <Download size={24} />
+            </button>
+            <button 
+              onClick={() => setExpandedImage(null)} 
+              className="bg-white/10 hover:bg-white/20 p-2.5 rounded-full text-white transition-colors"
+              title="Fechar"
+            >
+              <X size={24} />
+            </button>
+          </div>
+          <img src={expandedImage} alt="Comprovante em tela cheia" className="max-w-full max-h-[85vh] object-contain rounded-small shadow-2xl" />
         </div>
       )}
     </div>

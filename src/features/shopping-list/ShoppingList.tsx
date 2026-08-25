@@ -36,9 +36,10 @@ export function ShoppingList() {
   const { user, homeId } = useAuthStore();
   const { registerElement, startTutorial, activeTutorial } = useTutorialStore();
 
-  const [currentTab, setCurrentTab] = useState(() => {
-    return localStorage.getItem('carrin_current_tab') || 'list';
-  });
+  // ESTADO DE ERRO DECLARADO AQUI DENTRO, NO LUGAR CERTO:
+  const [hasError, setHasError] = useState(false);
+
+  const [currentTab, setCurrentTab] = useState(() => localStorage.getItem('carrin_current_tab') || 'list');
 
   const [mainListId, setMainListId] = useState<string | null>(null);
   const [quickList, setQuickList] = useState<{ id: string, name: string | null } | null>(null);
@@ -61,7 +62,8 @@ export function ShoppingList() {
     setIsMarketMode(active);
   };
   const [isMarketMode, setIsMarketMode] = useState(false);
-  const hasActiveMarketSession = Object.keys(getMarketSessions()).length > 0;
+  
+  const currentListHasMarketSession = selectedListId ? !!getMarketSessions()[selectedListId]?.active : false;
   
   const [syncStatus, setSyncStatus] = useState<'Salvando...' | 'Salvo ✓' | 'Sem conexão • pendente' | null>(null);
   const [showFabTooltip, setShowFabTooltip] = useState(false);
@@ -148,27 +150,26 @@ export function ShoppingList() {
     }
   }, [homeId, user]);
 
+  // USE_EFFECT COM TRATAMENTO DE ERRO E LOADING CORRETO
   useEffect(() => {
     async function loadData() {
       if (!homeId || !user) return;
       try {
-        const mId = await itemService.getActiveMainListId(homeId);
-        const qList = await itemService.getActiveQuickList(homeId);
+        setHasError(false);
+        console.log(`[Carrin/Init] Iniciando fluxo para Casa: ${homeId}`);
         
+        const mId = await itemService.getActiveMainListId(homeId);
+        if (!mId) throw new Error('getActiveMainListId retornou null. Lista principal não resolvida.');
+        
+        console.log(`[Carrin/Init] Main ID resolvido: ${mId}`);
         setMainListId(mId);
+        
+        const qList = await itemService.getActiveQuickList(homeId);
         setQuickList(qList);
         
-        if (mId && !selectedListId) {
+        if (!selectedListId) {
           setSelectedListId(mId);
-
-          const oldIsMarket = localStorage.getItem('carrin_is_market_mode');
-          if (oldIsMarket === 'true') {
-            saveMarketSession(mId, true);
-            localStorage.removeItem('carrin_is_market_mode');
-            localStorage.removeItem('carrin_market_session_active');
-          } else {
-            setIsMarketMode(!!getMarketSessions()[mId]?.active);
-          }
+          setIsMarketMode(!!getMarketSessions()[mId]?.active);
         }
 
         const prefs = await preferenceService.getHomeCategoryPreferences(homeId);
@@ -177,8 +178,13 @@ export function ShoppingList() {
         if (memberRes) setUserRole(memberRes.role);
         await checkAccess();
         
+        console.log(`[Carrin/Init] Tudo carregado com sucesso.`);
       } catch (error) {
-        console.error("Erro ao carregar dados iniciais:", error);
+        console.error("[Carrin/Init] Falha no fluxo inicial:", error);
+        setHasError(true);
+        setToastMsg('Erro crítico ao carregar lista.');
+      } finally {
+        setLoading(false);
       }
     }
     loadData();
@@ -212,7 +218,6 @@ export function ShoppingList() {
     if (!homeId) return;
     const listsChannel = supabase.channel(`lists_${homeId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'shopping_lists', filter: `home_id=eq.${homeId}` }, (payload) => {
-        
         if (payload.eventType === 'INSERT' && payload.new.list_type === 'quick') {
           setQuickList({ id: payload.new.id, name: payload.new.name });
         } 
@@ -236,17 +241,12 @@ export function ShoppingList() {
     if (!homeId) return;
     const channel = supabase
       .channel(`commercial_status_${homeId}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'house_commercial_states', filter: `home_id=eq.${homeId}` },
-        () => checkAccess()
-      ).subscribe();
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'house_commercial_states', filter: `home_id=eq.${homeId}` }, () => checkAccess())
+      .subscribe();
     return () => { supabase.removeChannel(channel); };
   }, [homeId, checkAccess]);
 
-  useEffect(() => {
-    localStorage.setItem('carrin_current_tab', currentTab);
-  }, [currentTab]);
+  useEffect(() => { localStorage.setItem('carrin_current_tab', currentTab); }, [currentTab]);
 
   useEffect(() => {
     if (isMarketMode) {
@@ -261,9 +261,7 @@ export function ShoppingList() {
   }, [isMarketMode]);
 
   useEffect(() => {
-    if (items.length === 0 && !loading) {
-      setEmptyMessage(EMPTY_MESSAGES[Math.floor(Math.random() * EMPTY_MESSAGES.length)]);
-    }
+    if (items.length === 0 && !loading) setEmptyMessage(EMPTY_MESSAGES[Math.floor(Math.random() * EMPTY_MESSAGES.length)]);
   }, [items.length, loading]);
 
   useEffect(() => {
@@ -276,10 +274,7 @@ export function ShoppingList() {
   const handleEnablePush = async () => {
     if (user) {
       const success = await notificationService.subscribeToPushNotifications();
-      if (success) {
-        localStorage.setItem('carrin_push_prompt_seen', 'true');
-        setPushPromptResolved(true);
-      }
+      if (success) { localStorage.setItem('carrin_push_prompt_seen', 'true'); setPushPromptResolved(true); }
       return success;
     }
     return false;
@@ -293,12 +288,8 @@ export function ShoppingList() {
 
   const handleStartQuickListCreation = () => {
     setShowListSwitcherMenu(false);
-    if (userPrefs?.tutorial_state?.quick_list_intro !== 'done') {
-      setShowQuickIntro(true);
-    } else {
-      setQuickListNameInput('');
-      setShowCreateQuick(true);
-    }
+    if (userPrefs?.tutorial_state?.quick_list_intro !== 'done') setShowQuickIntro(true);
+    else { setQuickListNameInput(''); setShowCreateQuick(true); }
   };
 
   const handleConfirmQuickIntro = async () => {
@@ -323,17 +314,9 @@ export function ShoppingList() {
     } catch (error: any) {
       if (error.code === '23505') {
         const existing = await itemService.getActiveQuickList(homeId);
-        if (existing) {
-          setQuickList(existing);
-          setSelectedListId(existing.id);
-          setShowCreateQuick(false);
-        }
-      } else {
-        alert("Erro ao criar lista rápida. Tente novamente.");
-      }
-    } finally {
-      setListActionLoading(false);
-    }
+        if (existing) { setQuickList(existing); setSelectedListId(existing.id); setShowCreateQuick(false); }
+      } else alert("Erro ao criar lista rápida. Tente novamente.");
+    } finally { setListActionLoading(false); }
   };
 
   const handleRenameQuickList = async () => {
@@ -344,11 +327,8 @@ export function ShoppingList() {
       await itemService.renameQuickList(quickList.id, finalName);
       setQuickList({ ...quickList, name: finalName });
       setShowRenameQuick(false);
-    } catch (e) {
-      alert("Erro ao renomear lista.");
-    } finally {
-      setListActionLoading(false);
-    }
+    } catch (e) { alert("Erro ao renomear lista."); } 
+    finally { setListActionLoading(false); }
   };
 
   const handleDeleteQuickList = async () => {
@@ -360,11 +340,8 @@ export function ShoppingList() {
       setQuickList(null);
       setSelectedListId(mainListId);
       setShowDeleteQuick(false);
-    } catch (e) {
-      alert("Erro ao excluir. Verifique se você é Administrador.");
-    } finally {
-      setListActionLoading(false);
-    }
+    } catch (e) { alert("Erro ao excluir. Verifique se você é Administrador."); } 
+    finally { setListActionLoading(false); }
   };
 
   const handleToggleMarketMode = () => {
@@ -372,13 +349,13 @@ export function ShoppingList() {
       const seenTutorial = localStorage.getItem('carrin_market_tutorial_seen');
       if (!seenTutorial) { setShowTutorial(true); return; }
       saveMarketSession(selectedListId!, true);
-    } else {
-      saveMarketSession(selectedListId!, false);
-    }
+    } else saveMarketSession(selectedListId!, false);
   };
 
   const handleCancelMarketSession = () => {
-    if (selectedListId) saveMarketSession(selectedListId, false);
+    const sessions = getMarketSessions();
+    const targetId = (quickList?.id && sessions[quickList.id]?.active) ? quickList.id : mainListId;
+    if (targetId) saveMarketSession(targetId, false);
   };
 
   const confirmTutorialAndEnter = () => {
@@ -466,30 +443,19 @@ export function ShoppingList() {
   const handleDelete = async (id: string) => {
     const itemToDelete = items.find(i => i.id === id);
     if (!itemToDelete) return;
-    
     const previousItems = [...items];
     setItems(items.filter(item => item.id !== id));
     
     try {
       await itemService.deleteItem(id);
-      
       if (undoDelete?.timerId) clearTimeout(undoDelete.timerId);
       const timerId = setTimeout(() => setUndoDelete(null), 5000);
       setUndoDelete({ item: itemToDelete, timerId });
 
       if (homeId) {
-        try {
-          await supabase.rpc('notify_items_removed', {
-            p_count: 1,
-            p_home_id: homeId,
-            p_item_name: itemToDelete.name,
-            p_shopping_list_id: selectedListId
-          });
-        } catch (notifyError) {
-          console.error('ITEM_REMOVED_NOTIFICATION_ERROR:', notifyError);
-        }
+        try { await supabase.rpc('notify_items_removed', { p_count: 1, p_home_id: homeId, p_item_name: itemToDelete.name, p_shopping_list_id: selectedListId }); } 
+        catch (notifyError) { console.error('ITEM_REMOVED_NOTIFICATION_ERROR:', notifyError); }
       }
-
     } catch (error) {
       console.error("Erro ao deletar item:", error);
       setItems(previousItems);
@@ -504,52 +470,33 @@ export function ShoppingList() {
     setUndoDelete(null);
     try {
       const savedItem = await itemService.addItem({ 
-        name: item.name, 
-        quantity: item.quantity, 
-        unit: item.unit, 
-        observation: item.observation, 
-        category_id: item.category_id || '🛒 Mantimentos', 
-        home_id: homeId, 
-        shopping_list_id: item.shopping_list_id || selectedListId, 
-        created_by: item.created_by 
+        name: item.name, quantity: item.quantity, unit: item.unit, observation: item.observation, 
+        category_id: item.category_id || '🛒 Mantimentos', home_id: homeId, shopping_list_id: item.shopping_list_id || selectedListId, created_by: item.created_by 
       });
       if (savedItem && selectedListId === (item.shopping_list_id || selectedListId)) { 
         setItems(prev => [savedItem, ...prev.filter(i => i.id !== savedItem.id)]); 
       }
       setToastMsg('Item restaurado');
       setTimeout(() => setToastMsg(null), 3000);
-    } catch (error) {
-      console.error("Erro ao desfazer exclusão:", error);
-    }
+    } catch (error) { console.error("Erro ao desfazer exclusão:", error); }
   };
 
   const handleClearList = async () => {
     if (!selectedListId || clearingList) return;
-    
     const snapshot = [...items];
     setClearingList(true);
     
     try {
       await itemService.clearList(selectedListId);
-      
       setItems([]);
       if (undoClear?.timerId) clearTimeout(undoClear.timerId);
       const timerId = setTimeout(() => setUndoClear(null), 5000);
       setUndoClear({ items: snapshot, listId: selectedListId, timerId });
 
       if (homeId && snapshot.length > 0) {
-        try {
-          await supabase.rpc('notify_items_removed', {
-            p_count: snapshot.length,
-            p_home_id: homeId,
-            p_item_name: null,
-            p_shopping_list_id: selectedListId
-          });
-        } catch (notifyError) {
-          console.error('ITEM_REMOVED_NOTIFICATION_ERROR:', notifyError);
-        }
+        try { await supabase.rpc('notify_items_removed', { p_count: snapshot.length, p_home_id: homeId, p_item_name: null, p_shopping_list_id: selectedListId }); } 
+        catch (notifyError) { console.error('ITEM_REMOVED_NOTIFICATION_ERROR:', notifyError); }
       }
-
     } catch (error) {
       console.error("Erro ao limpar a lista:", error);
       alert("Houve um erro ao limpar a lista. Verifique sua conexão.");
@@ -573,14 +520,8 @@ export function ShoppingList() {
       
       const restoredItems = await Promise.all(itemsToAdd.map(item => 
         itemService.addItem({ 
-          name: item.name, 
-          quantity: item.quantity, 
-          unit: item.unit, 
-          observation: item.observation, 
-          category_id: item.category_id || '🛒 Mantimentos', 
-          home_id: homeId, 
-          shopping_list_id: listId,
-          created_by: item.created_by 
+          name: item.name, quantity: item.quantity, unit: item.unit, observation: item.observation, 
+          category_id: item.category_id || '🛒 Mantimentos', home_id: homeId, shopping_list_id: listId, created_by: item.created_by 
         })
       ));
       
@@ -601,24 +542,40 @@ export function ShoppingList() {
   };
 
   const handleSaveItem = async (name: string, quantity: number | null, unit: string | null, observation: string, categoryId: string) => {
-    if (!homeId || !user || !selectedListId) return;
-    const formattedData = { name: name.trim(), quantity: quantity, unit: unit, observation: observation ? observation.trim() : undefined, category_id: categoryId || '🛒 Mantimentos' };
-    if (editingItem) {
-      setItems(items.map(i => i.id === editingItem.id ? { ...i, ...formattedData } : i));
-      if (isMarketMode) setSyncStatus('Salvando...');
-      try {
-        await itemService.updateItem(editingItem.id, formattedData);
-        if (isMarketMode) { setSyncStatus('Salvo ✓'); setTimeout(() => setSyncStatus(null), 2500); }
-      } catch (err) {
-        if (isMarketMode) setSyncStatus('Sem conexão • pendente');
-      }
-    } else {
-      const newItem = { ...formattedData, home_id: homeId, shopping_list_id: selectedListId, created_by: user.id };
-      const savedItem = await itemService.addItem(newItem as any);
-      if (savedItem) { setItems(prev => [savedItem, ...prev.filter(i => i.id !== savedItem.id)]); }
+    if (!homeId || !user) return;
+
+    if (!selectedListId) {
+      setToastMsg('Erro crítico: Lista não encontrada.');
+      console.error('[Carrin/SaveItem] Operação abortada. selectedListId é null.');
+      throw new Error("Lista principal não resolvida."); 
     }
-    setEditingItem(null);
-    setSearchQuery('');
+
+    const formattedData = { name: name.trim(), quantity: quantity, unit: unit, observation: observation ? observation.trim() : undefined, category_id: categoryId || '🛒 Mantimentos' };
+    
+    try {
+      if (editingItem) {
+        if (isMarketMode) setSyncStatus('Salvando...');
+        await itemService.updateItem(editingItem.id, formattedData);
+        setItems(items.map(i => i.id === editingItem.id ? { ...i, ...formattedData } : i));
+        if (isMarketMode) { setSyncStatus('Salvo ✓'); setTimeout(() => setSyncStatus(null), 2500); }
+      } else {
+        const newItem = { ...formattedData, home_id: homeId, shopping_list_id: selectedListId, created_by: user.id };
+        const savedItem = await itemService.addItem(newItem as any);
+        if (savedItem) { 
+          setItems(prev => [savedItem, ...prev.filter(i => i.id !== savedItem.id)]); 
+          // Toast AQUI foi removido! Agora quem avisa que deu certo é o AddItemModal.
+        }
+      }
+      
+      // O MODAL NÃO É MAIS FECHADO AQUI DENTRO E OS CAMPOS NÃO SÃO LIMPOS.
+      // Retornamos sucesso silencioso para que o modal decida o que fazer.
+    } catch (err) {
+      console.error("Erro ao salvar item:", err);
+      setToastMsg('Falha ao salvar o item.');
+      setTimeout(() => setToastMsg(null), 3000);
+      if (isMarketMode) setSyncStatus('Sem conexão • pendente');
+      throw err; 
+    }
   };
 
   const handleOpenFinishModal = () => {
@@ -662,15 +619,8 @@ export function ShoppingList() {
     setPendingListSwitch(null);
   };
 
-  const openAddModal = () => {
-    setEditingItem(null);
-    setIsModalOpen(true);
-  };
-
-  const openEditModal = (item: any) => {
-    setEditingItem(item);
-    setIsModalOpen(true);
-  };
+  const openAddModal = () => { setEditingItem(null); setIsModalOpen(true); };
+  const openEditModal = (item: any) => { setEditingItem(item); setIsModalOpen(true); };
 
   const realPendingCount = items.filter(item => !item.is_completed).length;
   const totalEstimated = items.reduce((sum, item) => { return sum + (item.is_completed && item.price ? Number(item.price) : 0); }, 0);
@@ -688,16 +638,13 @@ export function ShoppingList() {
         acc[cat].push(item);
         return acc;
       }, {});
-
       const sortedCategories = Object.keys(groupedPending).sort();
 
       return (
         <div className="mb-6 space-y-6">
           {sortedCategories.map((category) => (
             <div key={category}>
-              <h2 className={`font-bold text-gray-500 uppercase tracking-wider mb-3 ${isMarketMode ? 'text-base text-emerald-800' : 'text-sm'}`}>
-                {category}
-              </h2>
+              <h2 className={`font-bold text-gray-500 uppercase tracking-wider mb-3 ${isMarketMode ? 'text-base text-emerald-800' : 'text-sm'}`}>{category}</h2>
               <div className="space-y-2">
                 {groupedPending[category].map((item: any) => (
                   <div key={item.id} className={isMarketMode ? 'py-1 text-lg' : ''}>
@@ -721,7 +668,6 @@ export function ShoppingList() {
         acc[name].items.push(item);
         return acc;
       }, {});
-
       const sortedResidents = Object.keys(groupedPending).sort();
 
       return (
@@ -793,12 +739,21 @@ export function ShoppingList() {
       )}
 
       <div className={`w-full min-h-[100dvh] bg-carrin-bg ${isMarketMode ? 'pb-[calc(6rem+env(safe-area-inset-bottom))]' : 'pb-[calc(8rem+env(safe-area-inset-bottom))]'} ${currentTab === 'list' ? 'block' : 'hidden'}`}>
-        {!isMarketMode && hasActiveMarketSession && (
+        
+        {/* MODO MERCADO: Só aparece se a lista aberta tiver sessão ativa */}
+        {!isMarketMode && currentListHasMarketSession && (
           <div className="bg-emerald-800 text-white px-4 py-2.5 text-xs flex items-center justify-between shadow-md">
             <div className="flex items-center gap-2"><AlertCircle size={16} className="text-emerald-300 animate-pulse" /><span className="font-semibold">Modo Mercado em andamento</span></div>
             <div className="flex items-center gap-2">
               <button onClick={handleCancelMarketSession} className="bg-emerald-900/40 hover:bg-emerald-900/60 text-emerald-100 px-3 py-1 rounded-small font-bold text-xs flex items-center gap-1 transition-all" title="Encerrar Sessão"><X size={12} strokeWidth={3} /><span>Encerrar</span></button>
-              <button onClick={() => setIsMarketMode(true)} className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded-small font-bold text-xs flex items-center gap-1 shadow transition-all"><Play size={12} fill="white" /><span>Retomar</span></button>
+              <button onClick={() => {
+                const sessions = getMarketSessions();
+                const targetId = (quickList?.id && sessions[quickList.id]?.active) ? quickList.id : mainListId;
+                if (targetId) {
+                  setSelectedListId(targetId);
+                  setIsMarketMode(true);
+                }
+              }} className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded-small font-bold text-xs flex items-center gap-1 shadow transition-all"><Play size={12} fill="white" /><span>Retomar</span></button>
             </div>
           </div>
         )}
@@ -907,6 +862,15 @@ export function ShoppingList() {
         <div ref={(el) => registerElement('list-items-area', el)} className="px-6">
           {loading ? (
             <p className="text-center text-gray-400 py-10">Carregando itens...</p>
+          ) : hasError ? (
+            <div className="text-center py-12 bg-white rounded-card shadow-sm p-6">
+              <AlertCircle size={32} className="mx-auto text-red-500 mb-3" />
+              <p className="text-carrin-dark mb-2 font-bold text-sm">Falha ao carregar a lista.</p>
+              <p className="text-xs text-gray-500 mb-4">Ocorreu um erro no banco de dados.</p>
+              <button onClick={() => window.location.reload()} className="bg-gray-100 text-gray-600 px-4 py-2 rounded-small font-bold text-xs hover:bg-gray-200">
+                Tentar Novamente
+              </button>
+            </div>
           ) : items.length === 0 ? (
             <div className="text-center py-12 bg-white rounded-card shadow-sm p-6 animate-in fade-in zoom-in duration-300">
               <p className="text-gray-400 mb-2 font-bold text-sm">{selectedListType === 'quick' ? 'Sua Lista Rápida está vazia.' : 'Sua lista está vazia.'}</p>
@@ -942,9 +906,7 @@ export function ShoppingList() {
             ) : (
               <div className="bg-white p-4 rounded-card shadow-[0_-10px_40px_-15px_rgba(0,0,0,0.1)] border border-red-200 pointer-events-auto flex flex-col items-center text-center gap-2 animate-in slide-in-from-bottom-4 mb-2">
                 <div className="flex items-center gap-2 text-red-500 font-bold"><AlertCircle size={20} /><span>Acesso Suspenso</span></div>
-                <p className="text-xs text-gray-500 font-medium leading-relaxed">
-                  {billingUI.blockMessage}
-                </p>
+                <p className="text-xs text-gray-500 font-medium leading-relaxed">{billingUI.blockMessage}</p>
                 {userRole === 'owner' && (
                   <button onClick={() => setCurrentTab('settings')} className="w-full mt-2 bg-red-50 text-red-600 py-3 rounded-small font-bold text-sm hover:bg-red-100 transition-colors">
                     {billingUI.ctaText || 'Regularizar Assinatura'}
@@ -1031,7 +993,7 @@ export function ShoppingList() {
                 <div className="bg-emerald-50 border border-emerald-100 p-3 rounded-small flex justify-between items-center"><span className="text-xs font-bold text-emerald-800 uppercase tracking-wider">Total do item</span><span className="text-xl font-extrabold text-emerald-600">R$ {liveTotal.toFixed(2)}</span></div>
                 <div className="flex gap-2 mt-2">
                   <button type="button" onClick={() => { executeToggle(priceModalItem.id, true, 0, null, null); setPriceModalItem(null); setPriceInput(''); }} className="w-1/2 bg-gray-100 text-gray-600 py-3 rounded-small font-bold text-sm hover:bg-gray-200 transition-colors">Pular valor</button>
-                  <button type="submit" className="w-full bg-emerald-600 text-white py-3 rounded-small font-bold text-sm shadow hover:bg-emerald-700 transition-all">Salvar Preço</button>
+                  <button type="submit" className="w-full bg-emerald-600 text-white py-3 rounded-small font-bold text-sm shadow hover:bg-emerald-700 transition-all">Confirmar</button>
                 </div>
               </form>
             </div>
@@ -1043,23 +1005,15 @@ export function ShoppingList() {
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60] p-4 animate-in fade-in duration-200">
           <div className="bg-white w-full max-w-sm rounded-card p-6 shadow-2xl animate-in zoom-in-95 duration-200">
             <h3 className="text-xl font-extrabold text-carrin-dark mb-3">Lista Rápida</h3>
-            <p className="text-sm text-gray-600 mb-5 leading-relaxed">
-              Crie uma lista separada para aquele churrasco, festa ou compra inesperada.
-            </p>
-            
+            <p className="text-sm text-gray-600 mb-5 leading-relaxed">Crie uma lista separada para aquele churrasco, festa ou compra inesperada.</p>
             <ul className="text-sm text-gray-500 mb-6 space-y-3 pl-1 font-medium">
               <li className="flex gap-2 items-start"><Check size={16} className="text-emerald-500 shrink-0 mt-0.5" /> Não mistura com os itens da Casa.</li>
               <li className="flex gap-2 items-start"><Check size={16} className="text-emerald-500 shrink-0 mt-0.5" /> Possui Modo Mercado e Histórico próprios.</li>
               <li className="flex gap-2 items-start"><Check size={16} className="text-emerald-500 shrink-0 mt-0.5" /> Todos os moradores podem acessar.</li>
             </ul>
-
             <div className="flex flex-col gap-2">
-              <button onClick={handleConfirmQuickIntro} className="w-full bg-carrin-primary text-white py-3.5 rounded-button font-bold text-sm shadow hover:opacity-90 transition-all">
-                Criar lista rápida
-              </button>
-              <button onClick={() => setShowQuickIntro(false)} className="w-full text-gray-500 py-3 rounded-button font-bold text-sm hover:bg-gray-50 transition-colors">
-                Agora não
-              </button>
+              <button onClick={handleConfirmQuickIntro} className="w-full bg-carrin-primary text-white py-3.5 rounded-button font-bold text-sm shadow hover:opacity-90 transition-all">Criar lista rápida</button>
+              <button onClick={() => setShowQuickIntro(false)} className="w-full text-gray-500 py-3 rounded-button font-bold text-sm hover:bg-gray-50 transition-colors">Agora não</button>
             </div>
           </div>
         </div>
@@ -1105,16 +1059,7 @@ export function ShoppingList() {
       )}
 
       <AddItemModal isOpen={isModalOpen} onClose={() => { setIsModalOpen(false); setEditingItem(null); }} onSave={handleSaveItem} initialData={editingItem} existingItems={items} homePreferences={homePreferences} onGoToExisting={(item) => { setIsModalOpen(false); setEditingItem(null); setSearchQuery(item.name); }} />
-      
-      <FinishShoppingModal 
-        isOpen={isFinishModalOpen} 
-        onClose={handleCloseFinishModal} 
-        onConfirm={handleConfirmFinishShopping} 
-        totalAmount={totalEstimated} 
-        totalItems={completedItems.length} 
-        loading={finishing} 
-        isQuickList={selectedListType === 'quick'} 
-      />
+      <FinishShoppingModal isOpen={isFinishModalOpen} onClose={handleCloseFinishModal} onConfirm={handleConfirmFinishShopping} totalAmount={totalEstimated} totalItems={completedItems.length} loading={finishing} isQuickList={selectedListType === 'quick'} />
       <PushPermissionModal isOpen={showPushPrompt} onClose={handleDeclinePush} onConfirm={handleEnablePush} />
 
       {!isMarketMode && <BottomNav currentTab={currentTab} onTabChange={setCurrentTab} />}

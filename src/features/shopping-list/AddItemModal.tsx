@@ -7,7 +7,6 @@ import { preferenceService } from '../../services/preferenceService';
 import { useAuthStore } from '../../stores/useAuthStore';
 import { itemService } from '../../services/itemService';
 
-
 export const CATEGORIES = [
   '🛒 Mantimentos', '🍎 Hortifrúti', '🥩 Açougue', '🥛 Laticínios',
   '🧹 Limpeza', '🧴 Higiene', '🍺 Bebidas', '🐶 Pet',
@@ -183,16 +182,18 @@ export function AddItemModal({ isOpen, onClose, onSave, initialData, existingIte
     await executeSaveAndClose();
   };
 
+  // =============== AÇÃO DO BOTÃO "ADICIONAR E FECHAR" ===============
   const executeSaveAndClose = async () => {
     setLoading(true);
     setErrorMsg(null);
     try {
       const { qty, unt } = parseQuantityInput(quantityInput);
       await onSave(name, qty, unt, observation, category);
+      // Se não houver erro, fecha o modal (Sucesso real)
       handleClose();
     } catch (error: any) {
       console.error("Erro ao salvar item:", error);
-      setErrorMsg(error.message || "Erro ao salvar item.");
+      setErrorMsg(error.message || "Erro ao salvar item. Tente novamente.");
     } finally {
       setLoading(false);
     }
@@ -213,6 +214,7 @@ export function AddItemModal({ isOpen, onClose, onSave, initialData, existingIte
     await executeSaveAndContinue();
   };
 
+  // =============== AÇÃO DO BOTÃO "+" (CONTINUAR) ===============
   const executeSaveAndContinue = async () => {
     const currentName = name;
     const { qty, unt } = parseQuantityInput(quantityInput);
@@ -223,7 +225,10 @@ export function AddItemModal({ isOpen, onClose, onSave, initialData, existingIte
     setErrorMsg(null);
 
     try {
+      // 1. Tenta salvar (Aguardando sucesso real do banco)
       await onSave(currentName, qty, unt, currentObservation, currentCategory);
+      
+      // 2. Se salvou com sucesso, limpa os campos
       setName('');
       setQuantityInput('');
       setObservation('');
@@ -231,11 +236,18 @@ export function AddItemModal({ isOpen, onClose, onSave, initialData, existingIte
       setSuggestions([]);
       setShowSuggestions(false);
       
+      // 3. Mostra o sucesso local
       setToastMsg(`${currentName} adicionado!`);
       setTimeout(() => setToastMsg(null), 3000);
+
+      // 4. Devolve o foco para o input principal para continuar digitando
+      setTimeout(() => {
+        document.getElementById('input-nome-item')?.focus();
+      }, 100);
+
     } catch (error: any) {
       console.error("Erro no salvamento contínuo:", error);
-      setErrorMsg(error.message || "Erro ao salvar.");
+      setErrorMsg(error.message || "Erro ao salvar o item. Tente novamente.");
     } finally {
       setLoading(false);
     }
@@ -333,6 +345,7 @@ export function AddItemModal({ isOpen, onClose, onSave, initialData, existingIte
           <form id="add-item-form" onSubmit={handleSaveAndClose} className="flex flex-col gap-3 pb-safe">
             <div className="flex flex-col gap-1 relative">
               <Input
+                id="input-nome-item"
                 label="O que falta comprar?"
                 placeholder="Ex: Detergente, Leite, Tomate..."
                 value={name}
@@ -341,7 +354,6 @@ export function AddItemModal({ isOpen, onClose, onSave, initialData, existingIte
                 autoFocus
               />
               
-              {/* Dropdown de Sugestões Integrado ao Fluxo (sem absolute, max 3) */}
               {showSuggestions && suggestions.length > 0 && (
                 <div className="flex flex-col mt-1 bg-gray-50 border border-gray-200 rounded-small overflow-hidden transition-all animate-in fade-in duration-200">
                   {suggestions.slice(0, 3).map((s, idx) => {
@@ -350,7 +362,6 @@ export function AddItemModal({ isOpen, onClose, onSave, initialData, existingIte
                       <button
                         key={idx}
                         type="button"
-                        /* CORREÇÃO UX: onPointerDown + preventDefault evita que o blur do input aconteça antes do clique registrar, garantindo seleção em 1 toque */
                         onPointerDown={(e) => {
                           e.preventDefault();
                           applySuggestion(s);
@@ -390,7 +401,7 @@ export function AddItemModal({ isOpen, onClose, onSave, initialData, existingIte
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
                 disabled={loading}
-                className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-small text-sm text-carrin-dark focus:outline-none focus:border-carrin-primary"
+                className="w-full px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-small text-sm text-carrin-dark focus:outline-none focus:border-carrin-primary disabled:opacity-50"
               >
                 {CATEGORIES.map((cat) => (
                   <option key={cat} value={cat}>

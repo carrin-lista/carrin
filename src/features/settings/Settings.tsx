@@ -11,11 +11,17 @@ import { ManageSubscription } from './ManageSubscription';
 import { interpretBillingState } from '../../services/billingInterpreter';
 import { Support } from './Support';
 import { OtherOptions } from './OtherOptions';
+import { usePwaStore } from '../../stores/usePwaStore';
 
 export function Settings() {
   const { user, homeId } = useAuthStore();
   const { registerElement } = useTutorialStore();
   
+  // Declaração dos hooks do PWA (Sempre no topo!)
+  const updateAvailable = usePwaStore(s => s.updateAvailable);
+  const availableVersion = usePwaStore(s => s.availableVersion);
+  const applyUpdate = usePwaStore(s => s.applyUpdate);
+
   const [loading, setLoading] = useState(true);
   const [userProfile, setUserProfile] = useState<any>(null);
   const [commercialContext, setCommercialContext] = useState<any>(null);
@@ -32,7 +38,6 @@ export function Settings() {
   const [savingProfile, setSavingProfile] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // Navegação Interna de Ajustes
   const [showCheckout, setShowCheckout] = useState(false);
   const [showManage, setShowManage] = useState(false);
   const [showSupport, setShowSupport] = useState(false);
@@ -179,6 +184,7 @@ export function Settings() {
 
   const billingUI = interpretBillingState(commercialContext, userRole);
 
+  // SE A TELA CONTINUAR BRANCA AO CLICAR EM "OUTRAS OPÇÕES", o erro está dentro do seu arquivo OtherOptions.tsx!
   if (showCheckout) return <Checkout onBack={() => setShowCheckout(false)} />;
   if (showManage) return <ManageSubscription onBack={() => setShowManage(false)} commercialContext={commercialContext} />;
   if (showSupport) return <Support onBack={() => setShowSupport(false)} />;
@@ -307,7 +313,6 @@ export function Settings() {
         </div>
       )}
 
-      {/* NOTIFICAÇÕES - LIMPO */}
       <div className="bg-white rounded-card p-5 shadow-sm space-y-4 border border-gray-100">
         <div className="flex items-center gap-2 text-carrin-dark font-semibold pb-2 border-b border-gray-50">
           <Bell size={20} className="text-carrin-primary" />
@@ -366,6 +371,24 @@ export function Settings() {
           <span className="text-sm font-medium text-gray-600">Sair da conta</span>
           <LogOut size={16} className="text-gray-400" />
         </div>
+      </div>
+
+      <div className="mt-8 mb-4 flex items-center justify-center gap-2 text-[11px] font-bold text-gray-400">
+        <span>Carrin · Versão {import.meta.env.VITE_APP_VERSION || '1.0.0'}</span>
+        <span className="text-gray-200">|</span>
+        {updateAvailable ? (
+          <button 
+            type="button"
+            onClick={applyUpdate} 
+            className="text-emerald-600 hover:underline"
+          >
+            Atualizar para {availableVersion}
+          </button>
+        ) : (
+          <span className="flex items-center gap-1">
+            <Check size={12} className="text-emerald-500" /> Carrin está atualizado
+          </span>
+        )}
       </div>
 
     </div>

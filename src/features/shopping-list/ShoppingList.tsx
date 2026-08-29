@@ -36,9 +36,7 @@ export function ShoppingList() {
   const { user, homeId } = useAuthStore();
   const { registerElement, startTutorial, activeTutorial } = useTutorialStore();
 
-  // ESTADO DE ERRO DECLARADO AQUI DENTRO, NO LUGAR CERTO:
   const [hasError, setHasError] = useState(false);
-
   const [currentTab, setCurrentTab] = useState(() => localStorage.getItem('carrin_current_tab') || 'list');
 
   const [mainListId, setMainListId] = useState<string | null>(null);
@@ -150,18 +148,14 @@ export function ShoppingList() {
     }
   }, [homeId, user]);
 
-  // USE_EFFECT COM TRATAMENTO DE ERRO E LOADING CORRETO
   useEffect(() => {
     async function loadData() {
       if (!homeId || !user) return;
       try {
         setHasError(false);
-        console.log(`[Carrin/Init] Iniciando fluxo para Casa: ${homeId}`);
-        
         const mId = await itemService.getActiveMainListId(homeId);
         if (!mId) throw new Error('getActiveMainListId retornou null. Lista principal não resolvida.');
         
-        console.log(`[Carrin/Init] Main ID resolvido: ${mId}`);
         setMainListId(mId);
         
         const qList = await itemService.getActiveQuickList(homeId);
@@ -178,7 +172,6 @@ export function ShoppingList() {
         if (memberRes) setUserRole(memberRes.role);
         await checkAccess();
         
-        console.log(`[Carrin/Init] Tudo carregado com sucesso.`);
       } catch (error) {
         console.error("[Carrin/Init] Falha no fluxo inicial:", error);
         setHasError(true);
@@ -204,11 +197,20 @@ export function ShoppingList() {
       .catch(e => console.error("Erro ao buscar itens atualizados:", e))
       .finally(() => setLoading(false));
 
+    // REALTIME COM PROTEÇÃO DE AVATAR (Fetch pós-insert)
     const itemsChannel = supabase.channel(`items_${selectedListId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'shopping_items', filter: `shopping_list_id=eq.${selectedListId}` }, (payload) => {
-        if (payload.eventType === 'INSERT') setItems(curr => curr.some(i => i.id === payload.new.id) ? curr : [payload.new, ...curr]);
-        else if (payload.eventType === 'UPDATE') setItems(curr => curr.map(i => i.id === payload.new.id ? { ...i, ...payload.new } : i));
-        else if (payload.eventType === 'DELETE') setItems(curr => curr.filter(i => i.id !== payload.old.id));
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'shopping_items', filter: `shopping_list_id=eq.${selectedListId}` }, async (payload) => {
+        if (payload.eventType === 'INSERT') {
+          const { data } = await supabase.from('shopping_items').select('*, users(username, full_name, avatar_url)').eq('id', payload.new.id).maybeSingle();
+          const itemToInsert = data || payload.new;
+          setItems(curr => curr.some(i => i.id === itemToInsert.id) ? curr : [itemToInsert, ...curr]);
+        }
+        else if (payload.eventType === 'UPDATE') {
+          setItems(curr => curr.map(i => i.id === payload.new.id ? { ...i, ...payload.new } : i));
+        }
+        else if (payload.eventType === 'DELETE') {
+          setItems(curr => curr.filter(i => i.id !== payload.old.id));
+        }
       }).subscribe();
 
     return () => { supabase.removeChannel(itemsChannel); };
@@ -217,7 +219,28 @@ export function ShoppingList() {
   useEffect(() => {
     if (!homeId) return;
     const listsChannel = supabase.channel(`lists_${homeId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'shopping_lists', filter: `home_id=eq.${homeId}` }, (payload) => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'shopping_lists', filter: `home_id=eq.${homeId}` }, async (payload) => {
+        
+        // PROTEÇÃO: Outro aparelho finalizou a lista que estou olhando
+        if (payload.eventType === 'UPDATE' && payload.new.id === selectedListId && payload.new.status === 'completed') {
+          setToastMsg('Esta lista foi finalizada por outro morador.');
+          setTimeout(() => setToastMsg(null), 4000);
+          setIsMarketMode(false);
+          saveMarketSession(selectedListId!, false);
+          
+          if (payload.new.list_type === 'main') {
+            const newMainId = await itemService.getActiveMainListId(homeId);
+            if (newMainId) {
+              setMainListId(newMainId);
+              setSelectedListId(newMainId);
+            }
+          } else {
+            setQuickList(null);
+            setSelectedListId(mainListId);
+          }
+          return;
+        }
+
         if (payload.eventType === 'INSERT' && payload.new.list_type === 'quick') {
           setQuickList({ id: payload.new.id, name: payload.new.name });
         } 
@@ -397,7 +420,9 @@ export function ShoppingList() {
   };
 
   const executeToggle = async (itemId: string, isCompleted: boolean, price?: number | null, unitPrice?: number | null, boughtQuantity?: number | null) => {
-    setItems(items.map(i => i.id === itemId ? { ...i, is_completed: isCompleted, price: price !== undefined ? price : i.price, unit_price: unitPrice !== undefined ? unitPrice : i.unit_price, bought_quantity: boughtQuantity !== undefined ? boughtQuantity : i.bought_quantity } : i));
+    // FUNCTIONAL UPDATE: Protege contra atropelamento remoto
+    setItems(prev => prev.map(i => i.id === itemId ? { ...i, is_completed: isCompleted, price: price !== undefined ? price : i.price, unit_price: unitPrice !== undefined ? unitPrice : i.unit_price, bought_quantity: boughtQuantity !== undefined ? boughtQuantity : i.bought_quantity } : i));
+    
     if (isMarketMode) setSyncStatus('Salvando...');
     try {
       await itemService.toggleItemCompletion(itemId, isCompleted, price || 0, unitPrice || 0, boughtQuantity || 0);
@@ -428,7 +453,9 @@ export function ShoppingList() {
   const handleUpdateCategory = async (itemId: string, newCategoryId: string) => {
     const item = items.find(i => i.id === itemId);
     if (!item || !homeId || !user) return;
-    setItems(items.map(i => i.id === itemId ? { ...i, category_id: newCategoryId } : i));
+    
+    setItems(prev => prev.map(i => i.id === itemId ? { ...i, category_id: newCategoryId } : i));
+    
     if (isMarketMode) setSyncStatus('Salvando...');
     try {
       await itemService.updateItem(itemId, { category_id: newCategoryId });
@@ -443,8 +470,11 @@ export function ShoppingList() {
   const handleDelete = async (id: string) => {
     const itemToDelete = items.find(i => i.id === id);
     if (!itemToDelete) return;
+    
+    // Backup para o desfazer
     const previousItems = [...items];
-    setItems(items.filter(item => item.id !== id));
+    
+    setItems(prev => prev.filter(item => item.id !== id));
     
     try {
       await itemService.deleteItem(id);
@@ -489,6 +519,7 @@ export function ShoppingList() {
     try {
       await itemService.clearList(selectedListId);
       setItems([]);
+      
       if (undoClear?.timerId) clearTimeout(undoClear.timerId);
       const timerId = setTimeout(() => setUndoClear(null), 5000);
       setUndoClear({ items: snapshot, listId: selectedListId, timerId });
@@ -500,6 +531,7 @@ export function ShoppingList() {
     } catch (error) {
       console.error("Erro ao limpar a lista:", error);
       alert("Houve um erro ao limpar a lista. Verifique sua conexão.");
+      setItems(snapshot);
     } finally {
       setClearingList(false);
       setShowClearConfirm(false);
@@ -546,7 +578,6 @@ export function ShoppingList() {
 
     if (!selectedListId) {
       setToastMsg('Erro crítico: Lista não encontrada.');
-      console.error('[Carrin/SaveItem] Operação abortada. selectedListId é null.');
       throw new Error("Lista principal não resolvida."); 
     }
 
@@ -556,19 +587,15 @@ export function ShoppingList() {
       if (editingItem) {
         if (isMarketMode) setSyncStatus('Salvando...');
         await itemService.updateItem(editingItem.id, formattedData);
-        setItems(items.map(i => i.id === editingItem.id ? { ...i, ...formattedData } : i));
+        setItems(prev => prev.map(i => i.id === editingItem.id ? { ...i, ...formattedData } : i));
         if (isMarketMode) { setSyncStatus('Salvo ✓'); setTimeout(() => setSyncStatus(null), 2500); }
       } else {
         const newItem = { ...formattedData, home_id: homeId, shopping_list_id: selectedListId, created_by: user.id };
         const savedItem = await itemService.addItem(newItem as any);
         if (savedItem) { 
           setItems(prev => [savedItem, ...prev.filter(i => i.id !== savedItem.id)]); 
-          // Toast AQUI foi removido! Agora quem avisa que deu certo é o AddItemModal.
         }
       }
-      
-      // O MODAL NÃO É MAIS FECHADO AQUI DENTRO E OS CAMPOS NÃO SÃO LIMPOS.
-      // Retornamos sucesso silencioso para que o modal decida o que fazer.
     } catch (err) {
       console.error("Erro ao salvar item:", err);
       setToastMsg('Falha ao salvar o item.');
@@ -583,12 +610,12 @@ export function ShoppingList() {
     setIsFinishModalOpen(true);
   };
 
-  const handleConfirmFinishShopping = async (receiptUrls: string[], marketName?: string) => {
+  const handleConfirmFinishShopping = async (receiptUrls: string[], marketName?: string, paymentMethods?: any[] | null) => {
     if (!homeId || !selectedListId || finishing) return;
     setFinishing(true);
     try {
-      const newListId = await historyService.finishActiveList(homeId, selectedListId, totalEstimated, receiptUrls, marketName);
-      saveMarketSession(selectedListId, false);
+      const newListId = await historyService.finishActiveList(homeId, selectedListId, totalEstimated, receiptUrls, marketName, paymentMethods);
+      saveMarketSession(selectedListId!, false);
       
       if (selectedListType === 'main' && newListId) {
         setPendingListSwitch(newListId);
@@ -740,7 +767,6 @@ export function ShoppingList() {
 
       <div className={`w-full min-h-[100dvh] bg-carrin-bg ${isMarketMode ? 'pb-[calc(6rem+env(safe-area-inset-bottom))]' : 'pb-[calc(8rem+env(safe-area-inset-bottom))]'} ${currentTab === 'list' ? 'block' : 'hidden'}`}>
         
-        {/* MODO MERCADO: Só aparece se a lista aberta tiver sessão ativa */}
         {!isMarketMode && currentListHasMarketSession && (
           <div className="bg-emerald-800 text-white px-4 py-2.5 text-xs flex items-center justify-between shadow-md">
             <div className="flex items-center gap-2"><AlertCircle size={16} className="text-emerald-300 animate-pulse" /><span className="font-semibold">Modo Mercado em andamento</span></div>

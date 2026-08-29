@@ -64,6 +64,38 @@ export function History({ isActive }: HistoryProps) {
     };
   }, [isAnyModalOpen]);
 
+const [uploadingReceipt, setUploadingReceipt] = useState(false);
+
+  const handleAddReceiptToHistory = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0 || !selectedReceipt || !homeId) return;
+
+    const file = files[0];
+    setUploadingReceipt(true);
+    try {
+      const url = await historyService.uploadReceipt(file, homeId);
+      const newUrls = [...(selectedReceipt.receipt_urls || []), url];
+
+      const { error } = await supabase
+        .from('shopping_lists')
+        .update({ receipt_urls: newUrls })
+        .eq('id', selectedReceipt.id);
+
+      if (error) throw error;
+
+      // Atualiza o estado da lista recarregando a página silenciosamente, 
+      // ou se você souber o nome do seu array (ex: setLists), troque window.location.reload() por:
+      // setLists(prev => prev.map(item => item.id === selectedReceipt.id ? { ...item, receipt_urls: newUrls } : item));
+      window.location.reload();
+    } catch (error) {
+      console.error('Erro ao adicionar comprovante:', error);
+      alert('Erro ao adicionar comprovante.');
+    } finally {
+      setUploadingReceipt(false);
+      e.target.value = ''; 
+    }
+  };
+
   const loadData = useCallback(async (isBackground = false) => {
     if (!homeId) return;
     if (!isBackground) setLoading(true);
@@ -816,24 +848,45 @@ export function History({ isActive }: HistoryProps) {
                   );
                 })()}
 
-                {selectedReceipt.receipt_urls && selectedReceipt.receipt_urls.length > 0 && (
+                {selectedReceipt.payment_methods && selectedReceipt.payment_methods.length > 0 && (
                   <div>
                     <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 border-b border-dashed border-gray-200 pb-2">
-                      Comprovantes
+                      Pagamento
                     </h3>
-                    <div className="flex gap-2 overflow-x-auto pb-2">
-                      {selectedReceipt.receipt_urls.map((url: string, i: number) => (
-                        <button 
-                          key={i}
-                          onClick={() => setExpandedImage(url)}
-                          className="relative w-16 h-16 flex-shrink-0 rounded-small overflow-hidden border border-gray-200 shadow-sm hover:border-emerald-500 transition-colors"
-                        >
-                          <img src={url} alt={`Comprovante ${i + 1}`} className="w-full h-full object-cover" />
-                        </button>
+                    <div className="space-y-2 mb-6">
+                      {selectedReceipt.payment_methods.map((p: any, i: number) => (
+                        <div key={i} className="flex justify-between items-center text-sm border border-gray-100 rounded-small p-2.5 shadow-sm bg-white">
+                          <span className="font-bold text-gray-600">{p.method}</span>
+                          <span className="font-extrabold text-carrin-dark">R$ {(p.amount_cents / 100).toFixed(2)}</span>
+                        </div>
                       ))}
                     </div>
                   </div>
                 )}
+
+               <div className="mt-6">
+                  <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3 border-b border-dashed border-gray-200 pb-2">
+                    Comprovantes
+                  </h3>
+                  <div className="flex flex-wrap gap-3">
+                    {selectedReceipt.receipt_urls?.map((url: string, i: number) => (
+                      <div key={i} onClick={() => setExpandedImage(url)} className="block cursor-pointer">
+                        <img src={url} alt={`Comprovante ${i + 1}`} className="w-16 h-16 object-cover rounded-small border border-gray-200 hover:opacity-80 transition-opacity" />
+                      </div>
+                    ))}
+                    
+                    {(!selectedReceipt.receipt_urls || selectedReceipt.receipt_urls.length < 3) && (
+                      <label className="w-16 h-16 rounded-small border-2 border-dashed border-gray-300 flex flex-col items-center justify-center text-gray-400 hover:text-emerald-600 hover:border-emerald-600 hover:bg-emerald-50 transition-colors cursor-pointer">
+                        {uploadingReceipt ? (
+                          <span className="animate-spin border-2 border-emerald-600 border-t-transparent rounded-full w-5 h-5"></span>
+                        ) : (
+                          <span className="text-2xl leading-none">+</span>
+                        )}
+                        <input type="file" accept="image/*" className="hidden" onChange={handleAddReceiptToHistory} disabled={uploadingReceipt} />
+                      </label>
+                    )}
+                  </div>
+                </div>
                 
                 {involvedCount > 1 && (
                   <div className="pt-4 border-t border-dashed border-gray-300 text-center">

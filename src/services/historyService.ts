@@ -2,17 +2,17 @@ import { supabase } from './supabase';
 
 export const historyService = {
   
-  // Adaptado para usar a RPC transacional unificada que trata Main e Quick nativamente
-  async finishActiveList(_homeId: string, listId: string, totalAmount: number, receiptUrls: string[], marketName?: string): Promise<string | null> {
+  // Adaptado para usar a RPC transacional unificada e suportar Pagamentos
+  async finishActiveList(_homeId: string, listId: string, totalAmount: number, receiptUrls: string[], marketName?: string, paymentMethods?: any[] | null): Promise<string | null> {
     const { data, error } = await supabase.rpc('finish_shopping_list', {
       p_list_id: listId,
       p_total_amount: totalAmount,
       p_receipt_urls: receiptUrls || [],
-      p_market_name: marketName || null
+      p_market_name: marketName || null,
+      p_payment_methods: paymentMethods || null
     });
 
     if (error) throw error;
-    // Se for Main, 'data' conterá o ID da nova lista. Se for Quick, 'data' será nulo (sinalizando para voltar à Main)
     return data;
   },
 

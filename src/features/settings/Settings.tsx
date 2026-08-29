@@ -179,7 +179,6 @@ export function Settings() {
 
   const billingUI = interpretBillingState(commercialContext, userRole);
 
-  // Roteamento interno da tela de Ajustes
   if (showCheckout) return <Checkout onBack={() => setShowCheckout(false)} />;
   if (showManage) return <ManageSubscription onBack={() => setShowManage(false)} commercialContext={commercialContext} />;
   if (showSupport) return <Support onBack={() => setShowSupport(false)} />;
@@ -282,7 +281,6 @@ export function Settings() {
         )}
       </div>
 
-      {/* ASSINATURA */}
       {homeId && (
         <div className={`bg-white rounded-card p-5 shadow-sm space-y-4 border ${!commercialContext?.can_write ? 'border-red-200' : 'border-gray-100'}`}>
           <div className="flex items-center gap-2 text-carrin-dark font-semibold pb-2 border-b border-gray-50">
@@ -309,7 +307,7 @@ export function Settings() {
         </div>
       )}
 
-      {/* NOTIFICAÇÕES */}
+      {/* NOTIFICAÇÕES - LIMPO */}
       <div className="bg-white rounded-card p-5 shadow-sm space-y-4 border border-gray-100">
         <div className="flex items-center gap-2 text-carrin-dark font-semibold pb-2 border-b border-gray-50">
           <Bell size={20} className="text-carrin-primary" />
@@ -324,20 +322,6 @@ export function Settings() {
               <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
             </label>
           </div>
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-gray-700">Lembretes de dia de mercado</span>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input type="checkbox" checked={preferences.notify_reminders} onChange={() => handleToggle('notify_reminders')} className="sr-only peer" />
-              <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
-            </label>
-          </div>
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-gray-700">Sugestões de produtos recorrentes</span>
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input type="checkbox" checked={preferences.notify_suggestions} onChange={() => handleToggle('notify_suggestions')} className="sr-only peer" />
-              <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-600"></div>
-            </label>
-          </div>
         </div>
 
         <div className="mt-6 pt-4 border-t border-gray-100">
@@ -348,7 +332,6 @@ export function Settings() {
         </div>
       </div>
 
-      {/* AJUDA E SUPORTE */}
       <div className="bg-white rounded-card p-5 shadow-sm space-y-4 border border-gray-100">
         <div className="flex items-center gap-2 text-carrin-dark font-semibold pb-2 border-b border-gray-50">
           <MessageSquare size={20} className="text-carrin-primary" />
@@ -367,7 +350,6 @@ export function Settings() {
         </div>
       </div>
 
-      {/* OUTRAS OPÇÕES E SAIR DA CONTA */}
       <div className="bg-white rounded-card shadow-sm border border-gray-100 overflow-hidden">
         <div 
           onClick={() => setShowOtherOptions(true)}

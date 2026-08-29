@@ -21,12 +21,12 @@ export const preferenceService = {
       return null;
     }
 
-    // Se o usuário ainda não tem preferência no banco, nós criamos agora com a versão 1 do tutorial!
+    // Se o usuário ainda não tem preferência no banco, criamos com os valores padrão
     if (!data) {
       const defaultPrefs = {
         user_id: userId,
         tutorial_version: 1,
-        tutorial_state: { list: 'pending', history: 'pending', home: 'pending', settings: 'pending' },
+        tutorial_state: { quick_list_intro: 'pending' },
         updated_at: new Date().toISOString()
       };
       

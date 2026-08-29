@@ -15,7 +15,6 @@ import { NotificationBell } from '../notifications/NotificationBell';
 import { PushPermissionModal } from './PushPermissionModal'; 
 import { notificationService } from '../../services/notificationService';
 import { preferenceService } from '../../services/preferenceService';
-import { useTutorialStore } from '../../stores/useTutorialStore';
 import { interpretBillingState } from '../../services/billingInterpreter';
 import { useScrollLock } from '../../hooks/useScrollLock';
 
@@ -34,7 +33,6 @@ const normalizeStr = (str: string) => {
 
 export function ShoppingList() {
   const { user, homeId } = useAuthStore();
-  const { registerElement, startTutorial, activeTutorial } = useTutorialStore();
 
   const [hasError, setHasError] = useState(false);
   const [currentTab, setCurrentTab] = useState(() => localStorage.getItem('carrin_current_tab') || 'list');
@@ -124,17 +122,6 @@ export function ShoppingList() {
     loadPrefs();
   }, [user?.id]);
 
-  useEffect(() => {
-    if (!pushPromptResolved || !userPrefs || userPrefs.tutorial_version !== 1 || activeTutorial) return;
-    const state = userPrefs.tutorial_state || {};
-    const tabToTutorialKey: Record<string, string> = { list: 'list', history: 'history', home: 'home', settings: 'settings' };
-    const currentKey = tabToTutorialKey[currentTab];
-    if (currentKey && state[currentKey] === 'pending') {
-      setUserPrefs((prev: any) => ({ ...prev, tutorial_state: { ...prev.tutorial_state, [currentKey]: 'started' } }));
-      setTimeout(() => startTutorial(currentKey as any), 500);
-    }
-  }, [currentTab, userPrefs, activeTutorial, startTutorial, pushPromptResolved]);
-
   const checkAccess = useCallback(async () => {
     if (!homeId || !user) return;
     try {
@@ -197,7 +184,6 @@ export function ShoppingList() {
       .catch(e => console.error("Erro ao buscar itens atualizados:", e))
       .finally(() => setLoading(false));
 
-    // REALTIME COM PROTEÇÃO DE AVATAR (Fetch pós-insert)
     const itemsChannel = supabase.channel(`items_${selectedListId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'shopping_items', filter: `shopping_list_id=eq.${selectedListId}` }, async (payload) => {
         if (payload.eventType === 'INSERT') {
@@ -221,7 +207,6 @@ export function ShoppingList() {
     const listsChannel = supabase.channel(`lists_${homeId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'shopping_lists', filter: `home_id=eq.${homeId}` }, async (payload) => {
         
-        // PROTEÇÃO: Outro aparelho finalizou a lista que estou olhando
         if (payload.eventType === 'UPDATE' && payload.new.id === selectedListId && payload.new.status === 'completed') {
           setToastMsg('Esta lista foi finalizada por outro morador.');
           setTimeout(() => setToastMsg(null), 4000);
@@ -420,7 +405,6 @@ export function ShoppingList() {
   };
 
   const executeToggle = async (itemId: string, isCompleted: boolean, price?: number | null, unitPrice?: number | null, boughtQuantity?: number | null) => {
-    // FUNCTIONAL UPDATE: Protege contra atropelamento remoto
     setItems(prev => prev.map(i => i.id === itemId ? { ...i, is_completed: isCompleted, price: price !== undefined ? price : i.price, unit_price: unitPrice !== undefined ? unitPrice : i.unit_price, bought_quantity: boughtQuantity !== undefined ? boughtQuantity : i.bought_quantity } : i));
     
     if (isMarketMode) setSyncStatus('Salvando...');
@@ -471,7 +455,6 @@ export function ShoppingList() {
     const itemToDelete = items.find(i => i.id === id);
     if (!itemToDelete) return;
     
-    // Backup para o desfazer
     const previousItems = [...items];
     
     setItems(prev => prev.filter(item => item.id !== id));
@@ -615,7 +598,7 @@ export function ShoppingList() {
     setFinishing(true);
     try {
       const newListId = await historyService.finishActiveList(homeId, selectedListId, totalEstimated, receiptUrls, marketName, paymentMethods);
-      saveMarketSession(selectedListId!, false);
+      saveMarketSession(selectedListId, false);
       
       if (selectedListType === 'main' && newListId) {
         setPendingListSwitch(newListId);
@@ -832,7 +815,7 @@ export function ShoppingList() {
 
             <div className="flex items-center gap-3">
               <NotificationBell />
-              <button ref={(el) => registerElement('btn-market-mode', el)} onClick={handleToggleMarketMode} className={`px-3.5 py-2.5 rounded-small text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm ${isMarketMode ? 'bg-emerald-600 text-white ring-2 ring-emerald-300' : 'bg-white text-carrin-dark border border-gray-200 hover:border-carrin-primary'}`}><ShoppingCart size={16} /><span>{isMarketMode ? 'Sair do Modo Mercado' : 'Modo Mercado'}</span></button>
+              <button onClick={handleToggleMarketMode} className={`px-3.5 py-2.5 rounded-small text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm ${isMarketMode ? 'bg-emerald-600 text-white ring-2 ring-emerald-300' : 'bg-white text-carrin-dark border border-gray-200 hover:border-carrin-primary'}`}><ShoppingCart size={16} /><span>{isMarketMode ? 'Sair do Modo Mercado' : 'Modo Mercado'}</span></button>
             </div>
           </div>
           
@@ -849,7 +832,7 @@ export function ShoppingList() {
               {items.length > 0 && (<button onClick={handleOpenFinishModal} disabled={finishing} className="bg-carrin-primary text-white text-xs px-3 py-2 rounded-small font-semibold flex items-center gap-1 hover:opacity-90 transition-all disabled:opacity-50 shadow" title="Finalizar compra e arquivar lista"><CheckCheck size={16} /><span>{finishing ? 'Finalizando...' : 'Finalizar'}</span></button>)}
             </div>
           ) : (
-            <div ref={(el) => registerElement('total-pending-bar', el)} className="bg-carrin-dark text-white p-4 rounded-card mb-6 flex justify-between items-center shadow-sm">
+            <div className="bg-carrin-dark text-white p-4 rounded-card mb-6 flex justify-between items-center shadow-sm">
               <div><p className="text-xs text-gray-400">Total de itens</p><p className="text-xl font-bold">{items.length}</p></div>
               <div className="text-right"><p className="text-xs text-gray-400">Pendentes</p><p className="text-xl font-bold">{realPendingCount}</p></div>
             </div>
@@ -857,11 +840,11 @@ export function ShoppingList() {
 
           {items.length > 0 && (
             <div className="mb-4 flex items-center gap-2">
-              <div ref={(el) => registerElement('search-bar', el)} className="relative flex-1">
+              <div className="relative flex-1">
                 <Search size={16} className="absolute left-3 top-3 text-gray-400" />
                 <input type="text" placeholder="Pesquisar item..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full pl-9 pr-3 py-2.5 bg-white border border-gray-100 rounded-small text-sm focus:outline-none focus:border-emerald-600 transition-colors shadow-sm" />
               </div>
-              <div ref={(el) => registerElement('category-filter', el)} className="relative shrink-0">
+              <div className="relative shrink-0">
                 <select value={sortBy} onChange={(e) => setSortBy(e.target.value as any)} className="appearance-none bg-white border border-gray-100 rounded-small pl-9 pr-8 py-2.5 text-sm text-carrin-dark font-semibold focus:outline-none focus:border-emerald-600 transition-colors cursor-pointer shadow-sm">
                   <option value="category">Categorias</option><option value="recent">Mais recentes</option><option value="oldest">Mais antigos</option><option value="alphabetical">Alfabética</option><option value="resident">Morador</option>
                 </select>
@@ -885,7 +868,7 @@ export function ShoppingList() {
           )}
         </div>
 
-        <div ref={(el) => registerElement('list-items-area', el)} className="px-6">
+        <div className="px-6">
           {loading ? (
             <p className="text-center text-gray-400 py-10">Carregando itens...</p>
           ) : hasError ? (
@@ -926,7 +909,7 @@ export function ShoppingList() {
         {!isMarketMode && (
           <div className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] left-0 w-full px-6 pointer-events-none z-40">
             {canWrite ? (
-              <button ref={(el) => registerElement('btn-add-item', el)} onClick={openAddModal} className="w-full bg-carrin-primary text-white py-4 rounded-button font-semibold shadow-sm pointer-events-auto hover:opacity-90 transition-all flex items-center justify-center gap-2">
+              <button onClick={openAddModal} className="w-full bg-carrin-primary text-white py-4 rounded-button font-semibold shadow-sm pointer-events-auto hover:opacity-90 transition-all flex items-center justify-center gap-2">
                 <span>+ Adicionar Item</span>
               </button>
             ) : (

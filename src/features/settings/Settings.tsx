@@ -5,7 +5,6 @@ import { userService } from '../../services/userService';
 import { supabase } from '../../services/supabase';
 import { User, Bell, Edit3, Save, X, Check, AlertCircle, Camera, Trash2, CreditCard, ChevronRight, MessageSquare, LogOut } from 'lucide-react';
 import { notificationService } from '../../services/notificationService';
-import { useTutorialStore } from '../../stores/useTutorialStore';
 import { Checkout } from './Checkout'; 
 import { ManageSubscription } from './ManageSubscription'; 
 import { interpretBillingState } from '../../services/billingInterpreter';
@@ -15,7 +14,6 @@ import { usePwaStore } from '../../stores/usePwaStore';
 
 export function Settings() {
   const { user, homeId } = useAuthStore();
-  const { registerElement } = useTutorialStore();
   
   // Declaração dos hooks do PWA (Sempre no topo!)
   const updateAvailable = usePwaStore(s => s.updateAvailable);
@@ -205,7 +203,7 @@ export function Settings() {
         <p className="text-gray-500 text-sm">Gerencie o seu perfil e preferências.</p>
       </div>
 
-      <div ref={(el) => registerElement('settings-profile-area', el)} className="bg-white rounded-card p-5 shadow-sm space-y-4 border border-gray-100">
+      <div className="bg-white rounded-card p-5 shadow-sm space-y-4 border border-gray-100">
         <div className="flex items-center justify-between pb-2 border-b border-gray-50">
           <div className="flex items-center gap-2 text-carrin-dark font-semibold">
             <User size={20} className="text-carrin-primary" />

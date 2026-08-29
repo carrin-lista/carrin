@@ -8,7 +8,6 @@ import {
   Calendar, ShoppingBag, CheckCircle2, 
   X, Clock, User, TrendingUp, RotateCcw, ChevronRight, AlertCircle, Check, Wallet, Share2, Search, CopyPlus, Store, Edit2, Plus, Download
 } from 'lucide-react';
-import { useTutorialStore } from '../../stores/useTutorialStore';
 
 interface HistoryProps {
   isActive?: boolean;
@@ -20,7 +19,6 @@ const normalizeStr = (str: string) => {
 
 export function History({ isActive }: HistoryProps) {
   const { user, homeId } = useAuthStore();
-  const { registerElement } = useTutorialStore();
 
   const [historyList, setHistoryList] = useState<any[]>([]);
   const [homeMembers, setHomeMembers] = useState<any[]>([]);
@@ -469,12 +467,12 @@ const [uploadingReceipt, setUploadingReceipt] = useState(false);
       )}
 
       {filteredHistoryList.length === 0 ? (
-        <div ref={(el) => registerElement('history-main-area', el)} className="text-center py-12 bg-white rounded-card shadow-sm p-6">
+        <div className="text-center py-12 bg-white rounded-card shadow-sm p-6">
           <p className="text-gray-400 mb-2 font-bold">{searchQuery ? 'Nenhum resultado encontrado.' : 'Nenhuma compra finalizada.'}</p>
           <p className="text-xs text-gray-400">{searchQuery ? 'Tente buscar por outro termo.' : 'O registro da casa aparecerá aqui após você finalizar o Modo Mercado.'}</p>
         </div>
       ) : (
-        <div ref={(el) => registerElement('history-main-area', el)} className="space-y-8">
+        <div className="space-y-8">
           {Object.keys(groupedHistory).map((monthYear) => {
             const data = groupedHistory[monthYear];
             const avg = data.count > 0 ? data.totalSpent / data.count : 0;
